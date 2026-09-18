@@ -1,0 +1,4 @@
+# The conan recipe revision hashes the exported files, so a CRLF checkout on
+# the Windows publish runner would hash differently from the Linux and macOS
+# lanes and split one release across two revisions.
+* text=auto eol=lf

@@ -1,0 +1,11 @@
+// Every public header of the module; one no other TU includes still ships.
+#include "oxbox/http/asio.hpp"
+#include "oxbox/http/connection.hpp"
+#include "oxbox/http/delivery.hpp"
+#include "oxbox/http/error.hpp"
+#include "oxbox/http/fetch.hpp"
+#include "oxbox/http/response-stream.hpp"
+#include "oxbox/http/router.hpp"
+#include "oxbox/http/server-message.hpp"
+#include "oxbox/http/server.hpp"
+#include "oxbox/http/url.hpp"

@@ -1,0 +1,18 @@
+[project]
+name = "oxbox"
+cmake_option_prefix = "OXBOX"
+module_define_prefix = "OXBOX"
+
+[modules.http]
+# Boost.Asio has no Emscripten transport.
+platforms = ["native"]
+
+[cmake]
+extensions = ["reflect"]
+
+[run]
+default = "hello"
+
+[package]
+kind = "library"   # library | application | none
+name = "oxbox"
