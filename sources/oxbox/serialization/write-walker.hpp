@@ -5,7 +5,9 @@
 
 #include <concepts>
 #include <cstdint>
+#include <cstddef>
 #include <filesystem>
+#include <span>
 #include <format>
 #include <memory>
 #include <optional>
@@ -80,8 +82,22 @@ namespace oxbox::serialization::detail
       else   _w.WriteNull();
     }
 
+    // A run of octets: one length-prefixed node where the wire has one, an
+    // array of integers where a reader shows its values (JSON and the rest).
+    template <ByteRange T>
+    auto Visit(T const& v) -> void {
+      if constexpr (WriteBytesCapable<W>) {
+        _w.WriteBytes(std::span<std::byte const>{ v });
+        return;
+      }
+      _w.BeginArray();
+      for (auto const octet : v) _w.Write(std::to_integer<std::uint64_t>(octet));
+      _w.EndArray();
+    }
+
     template <typename T>
       requires requires(T const& c) { c.begin(); c.end(); typename T::value_type; }
+            && (!ByteRange<T>)
             && (!std::same_as<T, std::string>)
             && (!std::same_as<T, std::string_view>)
             && (!requires { typename T::key_type; typename T::mapped_type; })

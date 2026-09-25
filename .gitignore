@@ -1,7 +1,8 @@
 # Everything underscore-prefixed is derived, local working state —
 # _build/, _install/, _conanhome/, _pyvenv/, _bdudata/ (the buildutil
 # convention; `buildutil clean --nuke` wipes exactly this set).
-_*
+/_*
+/test_package/_*
 
 # conan writes it on every install; buildutil drives cmake directly
 CMakeUserPresets.json

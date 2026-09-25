@@ -134,7 +134,28 @@ namespace oxbox::serialization::detail
 
     // exactly N elements are read and a shorter wire array is malformed;
     // surplus wire elements are left unread
+    // A run of octets: one length-prefixed node where the wire has one, an
+    // array of integers where a reader shows its values (JSON and the rest).
+    template <ByteRange T>
+      requires requires(T& c, std::byte v) { c.push_back(v); c.clear(); }
+    auto Visit(T& out) -> void {
+      out.clear();
+      if constexpr (ReadBytesCapable<R>) {
+        auto const octets{ _r.ReadBytes() };
+        out.append_range(octets);
+        return;
+      }
+      _r.EnterArray();
+      while (_r.HasNext()) {
+        _r.EnterNext();
+        out.push_back(Octet());
+        _r.LeaveNext();
+      }
+      _r.LeaveArray();
+    }
+
     template <FixedSequence T>
+      requires (!ByteRange<T>)
     auto Visit(T& out) -> void {
       _r.EnterArray();
       for (auto& element : out) {
@@ -149,8 +170,34 @@ namespace oxbox::serialization::detail
       _r.LeaveArray();
     }
 
+    template <ByteRange T>
+      requires FixedSequence<T>
+    auto Visit(T& out) -> void {
+      if constexpr (ReadBytesCapable<R>) {
+        auto const octets{ _r.ReadBytes() };
+        if (octets.size() != std::tuple_size<T>::value)
+          throw oxbox::serialization::ParseError{ std::format(
+            "expected {} octets at {}", std::tuple_size<T>::value,
+            _r.Path()) };
+        std::ranges::copy(octets, out.begin());
+        return;
+      }
+      _r.EnterArray();
+      for (auto& octet : out) {
+        if (!_r.HasNext())
+          throw oxbox::serialization::ParseError{ std::format(
+            "expected {} octets at {}", std::tuple_size<T>::value,
+            _r.Path()) };
+        _r.EnterNext();
+        octet = Octet();
+        _r.LeaveNext();
+      }
+      _r.LeaveArray();
+    }
+
     template <typename T>
       requires requires(T& c, typename T::value_type v) { c.begin(); c.end(); typename T::value_type; }
+            && (!ByteRange<T>)
             && (!std::same_as<T, std::string>)
             && (!std::same_as<T, std::string_view>)
             && (!requires { typename T::key_type; typename T::mapped_type; })
@@ -280,6 +327,16 @@ namespace oxbox::serialization::detail
     }
 
   private:
+    // A wire integer standing for one octet; a reader that shows values can
+    // carry one the octet cannot hold.
+    auto Octet() -> std::byte {
+      auto const value{ _r.template Read<std::uint64_t>() };
+      if (value > 0xffu)
+        throw oxbox::serialization::ParseError{ std::format(
+          "octet {} out of range at {}", value, _r.Path()) };
+      return static_cast<std::byte>(value);
+    }
+
     R& _r;
   };
 }

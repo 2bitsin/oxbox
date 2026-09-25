@@ -4,4 +4,5 @@ Link_dependencies(
   nlohmann_json::nlohmann_json  # JSON backend
   yaml-cpp::yaml-cpp            # YAML backend
   pugixml::pugixml              # XML backend
+  TEST oxbox-platform           # ScratchArea
 )

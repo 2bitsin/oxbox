@@ -4,6 +4,8 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <vector>
@@ -123,6 +125,74 @@ TEST(PositionalFormat, FieldsAdvanceRegardlessOfName)
   EXPECT_THROW(reader.EnterField("extra"), ser::MissingField);
   reader.LeaveObject();
   EXPECT_TRUE(reader.Path().empty());
+}
+
+TEST(PositionalFormat, TheThrownMessageNamesTheFieldAndTheItemItStandsIn)
+{
+  auto const wire{ ser::Serialize<F>(Record{}) };
+  ser::StringSource source{ wire };
+  Reader reader{ source };
+  reader.EnterObject();
+  for (auto skipped{ 0 }; skipped < 5; ++skipped) {
+    reader.EnterField("ignored");
+    reader.LeaveField();
+  }
+  reader.EnterField("array");
+  reader.EnterArray();
+  reader.EnterNext();
+  try {
+    static_cast<void>(reader.Read<std::string>());
+    FAIL() << "an integer read as a string must throw";
+  } catch (ser::TypeMismatch const& bad) {
+    EXPECT_NE(std::string_view{ bad.what() }.find("array/[]"),
+              std::string_view::npos) << bad.what();
+  }
+  reader.LeaveNext();
+  reader.LeaveArray();
+  reader.LeaveField();
+}
+
+TEST(PositionalFormat, NamesTheFieldAndTheItemAnErrorStandsIn)
+{
+  auto const wire{ ser::Serialize<F>(Record{}) };
+  ser::StringSource source{ wire };
+  Reader reader{ source };
+  reader.EnterObject();
+  for (auto skipped{ 0 }; skipped < 5; ++skipped) {
+    reader.EnterField("ignored");
+    reader.LeaveField();
+  }
+  reader.EnterField("array");
+  reader.EnterArray();
+  reader.EnterNext();
+  EXPECT_EQ(reader.Path(), std::filesystem::path{ "array" } / "[]");
+  reader.LeaveNext();
+  reader.LeaveArray();
+  reader.LeaveField();
+  EXPECT_TRUE(reader.Path().empty());
+}
+
+TEST(PositionalFormat, CarriesOctetsAsOneLengthPrefixedRun)
+{
+  std::vector<std::byte> const octets{ std::byte{ 0x00 }, std::byte{ 0x7f },
+                                       std::byte{ 0xff }, std::byte{ 0x80 } };
+  auto const wire{ ser::Serialize<F>(octets) };
+  EXPECT_EQ((ser::Deserialize<F, std::vector<std::byte>>(wire)), octets);
+  // The string node's own shape, not a tagged integer per octet.
+  EXPECT_EQ(wire.size(), ser::Serialize<F>(std::string{ "abcd" }).size());
+  EXPECT_EQ((ser::Deserialize<F, std::array<std::byte, 4>>(wire)),
+            (std::array{ std::byte{ 0x00 }, std::byte{ 0x7f },
+                         std::byte{ 0xff }, std::byte{ 0x80 } }));
+}
+
+TEST(PositionalFormat, RefusesOctetsOfTheWrongTagOrCount)
+{
+  auto const wire{ ser::Serialize<F>(
+    std::vector<std::byte>{ std::byte{ 1 }, std::byte{ 2 } }) };
+  EXPECT_THROW((ser::Deserialize<F, std::array<std::byte, 3>>(wire)),
+               ser::ParseError);
+  EXPECT_THROW((ser::Deserialize<F, std::vector<std::byte>>(
+                  ser::Serialize<F>(std::int64_t{ 7 }))), ser::TypeMismatch);
 }
 
 TEST(PositionalFormat, RejectsEveryTruncation)

@@ -1,5 +1,6 @@
 // NOLINTBEGIN(misc-non-private-member-variables-in-classes): test scaffolding -- public members
 // are the project's own allowance in tests
+#include "oxbox/platform/scratch-area.hpp"
 #include "oxbox/serialization/io.hpp"
 #include "oxbox/serialization/serializable.hpp"
 
@@ -135,58 +136,46 @@ TEST(SerializeTo, OstreamRoundTripWithYaml) {
 // ── Path-form (extension-keyed) Serialize / Deserialize ──────────────
 class PathDispatch : public ::testing::Test {
 protected:
-  std::filesystem::path _dir; // NOLINT(misc-non-private-member-variables-in-classes) gtest fixture, read by derived TEST_F bodies
-
-  void SetUp() override {
-    _dir = std::filesystem::temp_directory_path()
-        / "operatord-io-test"
-        / std::to_string(::testing::UnitTest::GetInstance()->random_seed());
-    std::filesystem::create_directories(_dir);
-  }
-
-  void TearDown() override {
-    std::error_code ec;
-    std::filesystem::remove_all(_dir, ec);
-  }
+  oxbox::platform::ScratchArea _scratch{ "path-dispatch" }; // NOLINT(misc-non-private-member-variables-in-classes) gtest fixture, read by derived TEST_F bodies
 };
 
 TEST_F(PathDispatch, JsonExtensionRoundTrips) {
-  auto const path = _dir / "probe.json";
+  auto const path = _scratch.File("probe.json");
   oxbox::serialization::SerializeTo(SAMPLE, path);
   auto back = oxbox::serialization::DeserializeFrom<Probe>(path);
   EXPECT_EQ(back, SAMPLE);
 }
 
 TEST_F(PathDispatch, YamlExtensionRoundTrips) {
-  auto const path = _dir / "probe.yaml";
+  auto const path = _scratch.File("probe.yaml");
   oxbox::serialization::SerializeTo(SAMPLE, path);
   auto back = oxbox::serialization::DeserializeFrom<Probe>(path);
   EXPECT_EQ(back, SAMPLE);
 }
 
 TEST_F(PathDispatch, YmlExtensionAlsoRoundTrips) {
-  auto const path = _dir / "probe.yml";
+  auto const path = _scratch.File("probe.yml");
   oxbox::serialization::SerializeTo(SAMPLE, path);
   auto back = oxbox::serialization::DeserializeFrom<Probe>(path);
   EXPECT_EQ(back, SAMPLE);
 }
 
 TEST_F(PathDispatch, XmlExtensionRoundTrips) {
-  auto const path = _dir / "probe.xml";
+  auto const path = _scratch.File("probe.xml");
   oxbox::serialization::SerializeTo(SAMPLE, path);
   auto back = oxbox::serialization::DeserializeFrom<Probe>(path);
   EXPECT_EQ(back, SAMPLE);
 }
 
 TEST_F(PathDispatch, UnknownExtensionThrows) {
-  auto const path = _dir / "probe.unknown";
+  auto const path = _scratch.File("probe.unknown");
   EXPECT_THROW(
     oxbox::serialization::SerializeTo(SAMPLE, path),
     oxbox::serialization::ParseError);
 }
 
 TEST_F(PathDispatch, MissingFileThrowsFileOpenError) {
-  auto const path = _dir / "definitely-not-here.json";
+  auto const path = _scratch.File("definitely-not-here.json");
   EXPECT_THROW(
     (oxbox::serialization::DeserializeFrom<Probe>(path)),
     oxbox::serialization::FileOpenError);
@@ -202,17 +191,17 @@ TEST(SerializeTo, MutableObjectUsesNonConstOstreamOverload) {
 
 TEST_F(PathDispatch, MutableObjectUsesNonConstPathOverloads) {
   Probe p = SAMPLE;
-  auto const explicit_path = _dir / "mutable-explicit.json";
+  auto const explicit_path = _scratch.File("mutable-explicit.json");
   oxbox::serialization::SerializeTo<oxbox::serialization::JsonFormat>(p, explicit_path);  // explicit format, T&
   EXPECT_EQ(oxbox::serialization::DeserializeFrom<Probe>(explicit_path), p);
 
-  auto const ext_path = _dir / "mutable-ext.json";
+  auto const ext_path = _scratch.File("mutable-ext.json");
   oxbox::serialization::SerializeTo(p, ext_path);                                  // extension-dispatched, T&
   EXPECT_EQ(oxbox::serialization::DeserializeFrom<Probe>(ext_path), p);
 }
 
 TEST_F(PathDispatch, WriteToUnopenablePathThrowsFileOpenError) {
-  auto const path = _dir / "no-such-subdir" / "probe.json";  // parent dir absent -> open fails
+  auto const path = _scratch.File("no-such-subdir") / "probe.json";  // parent dir absent -> open fails
   EXPECT_THROW(oxbox::serialization::SerializeTo(SAMPLE, path), oxbox::serialization::FileOpenError);
 }
 

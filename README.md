@@ -170,7 +170,7 @@ too, because where a failed contract is said is the host's business.
 
 | Header | Holds |
 |--------|-------|
-| `contract.hpp` | `ContractMode` and `Contracts<MODE>` — `Expects`/`Ensures`, `Unreachable(value)`, `NotImplemented`, and the one line a failure says |
+| `contract.hpp` | `ContractMode` and `Contracts<MODE>` — `Expects`/`Ensures`, `Unreachable(value)`, `NotImplemented`, the one line a failure says, and `ContractFailure`, that line as an exception |
 | `contract-report.hpp` | where that line goes, split by tag: stderr natively, the browser console in the wasm lane. Not re-exported |
 | `memory.hpp` | `AllocatePages`/`ReleasePages`, and `PageAlignedArray<T>` — an owning page-aligned array of a trivial type that copies as a real allocation |
 | `native-file.hpp` | the OS handle and its verbs. Not re-exported, which is what keeps it private to the module |
@@ -195,21 +195,29 @@ switch (kind)
 }
 ```
 
-`ContractMode` has three values, and each kind answers a broken contract
+`ContractMode` has four values, and each kind answers a broken contract
 its own way:
 
-| | `STOP` | `COMPLAIN` | `IGNORE` |
-|--------|--------|------------|----------|
-| `Expects` / `Ensures` | says the line, `std::abort()` | says the line, returns | nothing |
-| `Unreachable(value)` | says the line, `std::abort()` | says the line, `std::abort()` | `std::unreachable()` |
-| `NotImplemented(text)` | says the line, `std::abort()` | says the line, returns | returns |
+| | `STOP` | `THROW` | `COMPLAIN` | `IGNORE` |
+|--------|--------|---------|------------|----------|
+| `Expects` / `Ensures` | says the line, `std::abort()` | says the line, throws | says the line, returns | nothing |
+| `Unreachable(value)` | says the line, `std::abort()` | says the line, throws | says the line, `std::abort()` | `std::unreachable()` |
+| `NotImplemented(text)` | says the line, `std::abort()` | says the line, throws | says the line, returns | returns |
 
 `Unreachable` stops in `COMPLAIN` too, because a closed switch's default
-has no continuation to return to, and it stays `[[noreturn]]`.
+has no continuation to return to, and it stays `[[noreturn]]` in every
+mode — `THROW` leaves it by throwing.
 `NotImplemented` is not `[[noreturn]]` — the attribute cannot depend on the
 mode — so a site that calls it must have a defined continuation after it.
 A site that complains says its line every time it is hit; throttling that
 is the consumer's business.
+
+`THROW` is for a host with somewhere to put the failure: the line is said
+first, so a console keeps it whether or not anything catches, and then a
+`ContractFailure` — a `std::runtime_error` whose `what()` is that same
+line, carrying `Kind()`, `Text()` and `Where()` on their own — travels to
+the handler. A game's betas build with it and halt on a screen showing the
+line rather than walking past the hole.
 
 The line is the same in every mode:
 `precondition: <file>:<line> <function>: <text>`, on stderr natively and on
@@ -289,10 +297,10 @@ projects each had a drifting copy of.
 | `span.hpp` | `SafeSubspan`, `Advance`, `SpanCast`, `AsBytes`/`AsWritableBytes`, `BytesEqual` |
 | `ranges.hpp` | `get<N>` — `std::get<N>` as a callable, for use as a range projection |
 | `visitor.hpp` | `Visitor`, the overload-set aggregate for `std::visit` |
-| `state.hpp` | `Annotation` and `SessionState` — what a tool accumulates across a run, shared by `shared_ptr` so it survives a move |
 | `fixed-string.hpp` | `FixedString`, a string usable as a template argument |
 | `errors.hpp` | the project's exception family |
-| `text.hpp` | case folding, trimming, whole-string numbers. Text in, text out — nothing here reads a buffer, knows a format, or throws |
+| `exception.hpp` | `Exception<ID, Base, FORMAT, Args...>`, one exception type per `using` alias, its text formatted from checked arguments |
+| `text.hpp` | `Joined` (with optional projection), case folding and trimming. Text in, text out |
 | `string.hpp` | `CompatibleStringView`, `StringLikeValue`, `StringSequence`, `StringRange` — what counts as a string, and as a range of them |
 | `path.hpp` | `PathFromString`/`PathToString` — a filesystem path across the char/wchar boundary without a locale in the way |
 | `codepoint.hpp` | what a code point is and whether it is one: the widths, `Encoding`, the range constants, the validity rules |
@@ -303,10 +311,10 @@ projects each had a drifting copy of.
 | `buffer-encode-iterator.hpp` | writing code points into a byte buffer, with the shortfall and the refusal latch that say what did not fit |
 | `unicode.hpp` | the entry point that includes the six above, and `UtfTranscode`, the one crossing that needs both directions |
 | `transcode.hpp` | the tier above: `SniffByteOrderMark`, `DecodeResilient`, `EncodeAppend`, and the bounded-carry `ChunkDecoder` |
-| `serdes.hpp` | a scalar in and out of bytes at a named byte order |
+| `serdes.hpp` | `Fetch`/`Store`, `BoundedReader`/`BoundedWriter`, and `GrowingWriter<endian>` for integral/enum scalars, zero fill, bytes and raw text in an owned or supplied vector |
 | `hash.hpp` | FNV-1a at 32 and 64 bits, over bytes or text, with a running parameter for a digest over a stream; `HashString` and the `_hash` literal that make a string a switch case label |
 | `hex.hpp` | bytes to hex text and back off one nibble table |
-| `number-text.hpp` | the radix-marker grammar `0x`/`0b`/`0o`/trailing `h` over `text`'s `WholeNumber`, plus `AsWritten`; and `FormatNumber`/`HexText` the other way |
+| `number-text.hpp` | `ParseNumber` with radix markers and `AsWritten`, `ParseNumbers` for fixed-size separated fields, and `ParseNumberAfter` for a marked token; `FormatNumber`/`HexText` the other way |
 | `bits.hpp` | `AlignUp`/`IsAligned` in both spellings, the width-to-type maps (`UIntOfSize`, `UIntOfAtLeastLength`, …), `IntExtend`, and `ExtractBits`/`ReplaceBits`/`ExplodeBits`/`CompactBits`, every mask full-width safe |
 | `take-once.hpp` | a value held for exactly one reader. No `Empty()`, deliberately |
 
@@ -339,6 +347,25 @@ Three of those carry a contract worth stating here:
 - **`bits`**'s `AlignUp` comes in a runtime-boundary form with a
   power-of-two fast path and a `AlignUp<BOUNDARY>(T)` form that is a fact
   about the code, checked at compile time.
+
+`Exception` is a type named by a `using` alias rather than a class written
+per failure: `using PortRefused = Exception<"PortRefused"_hash,
+std::runtime_error, "port {} refused by {}", std::uint16_t, std::string>;`
+then `throw PortRefused{ port, peer };`. The format is checked against the
+argument types at compile time wherever the type is completed (thrown,
+caught, constructed), so a field without an argument or a presentation the
+type does not have is a build error; the exception is a dynamic width or
+precision, which throws `std::format_error` at construction. The id, by
+convention `HashString` of the alias name, keeps two aliases of one base
+and format distinct types that catch apart. A child of
+`runtime_error`/`logic_error` constructible from `std::string` is handed the
+text, and `what()` is what that constructor makes of it: the text itself for
+the nine classes [std.exceptions] defines. Any other default-constructible
+base gets it held shared and immutable behind `what()`, and a moved-from
+exception still answers `what()`. A copy is `noexcept` exactly when the
+base's is. A final base, or one that cannot be copied or copy-assigned, is
+refused; a base whose `what()` is final is a compile error unless the base
+is such a child.
 
 ## Consuming
 
@@ -375,6 +402,13 @@ they arrive in a consumer's graph whether or not it calls `http`.
 
 ## Building and testing
 
+The toolchain floor is gcc 16 with its libstdc++ (the code uses
+`std::ranges::starts_with`, `append_range` and range formatters, which
+libstdc++ 15 lacks) or an equivalent clang with libc++; cmake, ninja and
+python 3.11 or newer; and clang on PATH for the reflect extension, whose
+libclang wheel carries no builtin headers of its own. Dependencies resolve
+from Conan Center; nothing else is needed.
+
 ```
 ./buildutil build --skip-dependency-upload-so-everyone-rebuilds-from-source   # first run bootstraps _pyvenv
 ./buildutil test  --skip-dependency-upload-so-everyone-rebuilds-from-source   # unit tests + the package test
@@ -388,7 +422,7 @@ renamed `--no-upload` to that on build, test, run and bench; a bare
 `--no-upload` is refused with the new name). Only the publish lanes may
 upload.
 
-CTest discovers 1023 cases, including the short-option compile refusals.
+CTest discovers 1115 cases, including the short-option compile refusals.
 Runtime unit tests travel with the modules, as `.cpp` files under each
 module's `unit.test/`; `test_package/smoke.cpp` proves the shipped package
 resolves, compiles, links and runs a real roundtrip.
@@ -404,6 +438,8 @@ tools/negative-compile.sh                   # every case, gcc + clang + cl
 tools/negative-compile.sh --no-msvc         # the two host compilers only
 tools/negative-compile.sh --case hex        # rows whose name matches
 tools/negative-compile.sh --fixture FILE --expect TEXT [--spelling NAME]
+tools/negative-compile.sh --list            # units: each refusal, each control once
+tools/negative-compile.sh --compiler gcc --unit short-options.distinct
 ```
 
 The case table is in the script. Each row names a fixture that must be
@@ -412,8 +448,13 @@ message must lead the reader to (or nothing), and a control that must still
 compile — a check that only ever saw a failing compile cannot tell a working
 guard from a broken include path. The cases cover duplicate long names,
 duplicate short spellings (checking both member names), malformed short
-tags, and invalid hex literals. Native Linux CTest also runs the short-option
-cases with the host compilers; the standalone script adds the MSVC leg.
+tags, invalid hex literals, and exception formats their arguments do not
+fit. Native Linux CTest also runs every case in the
+table with the host compilers, one entry per unit and compiler
+(`negative-compile.gcc.short-options.distinct`), so each entry is one
+compile and a parallel gate spreads them; the standalone script adds the
+MSVC leg. A run whose every selected leg was skipped exits 77, which CTest
+reports as skipped.
 
 To watch it report failure, point it at a control:
 
@@ -511,6 +552,38 @@ What a consumer has to know about how this library behaves:
   a `.linux` tag on the cases that need `/dev/full` and `RLIMIT_AS`.
 
 ## Release notes
+
+**0.33.1 — documentation.** A known-issues paragraph no longer names an
+internal image; no code change.
+
+**0.33.0 — one exception template.** `utilities/exception.hpp` adds
+`Exception<ID, Base, FORMAT, Args...>`: an exception type is a `using`
+alias over it, its format checked against its arguments at compile time.
+Additive: nothing already published moved.
+
+**0.31.0 — shared joining and growing byte output.** `Joined` joins char
+ranges or formatted values, optionally through a projection. `GrowingWriter`
+appends typed scalars through `Store` (little-endian by default), zeros,
+bytes and raw narrow/UTF-16 text. `Release()` moves out the complete vector
+and leaves it empty, including when supplied by the caller. UTF-16 text
+uses the writer’s byte order; views returned by `Bytes()` are invalidated by
+reallocation or release.
+
+**0.29.0 — a fourth contract mode, `THROW`.** A broken contract can now be
+caught: `ContractMode::THROW` says the failure line as every other mode
+does and then throws `ContractFailure`, a `std::runtime_error` whose
+`what()` is that line and which carries the kind, the text and the
+`std::source_location` on their own. `Unreachable` throws there too and
+stays `[[noreturn]]`; `NotImplemented` throws rather than returning. A host
+that catches it can halt on a screen with the whole failure in it.
+Additive: nothing already published moved, and the three older modes are
+unchanged.
+
+**0.28.2 — a joined rest collector folds.** `cli/rest-collector.hpp`
+joined the tail with `std::views::join_with`, which the libc++ Apple's
+SDK ships (20.1) does not have, so an osxcross build of any consumer
+with a CLI failed; it is a `std::ranges::fold_left` now. No behaviour
+change.
 
 **0.28.1 — licensed.** MIT licence, recipe metadata, example hosts in the
 tests; no API change.
@@ -617,10 +690,21 @@ target rather than just headers.
 - The cross-compiled Windows lane cannot run: buildutil's reflect generator
   finds no C++ standard library inside the msvc-wine container. The lane is
   allowed to fail for that reason, and `tools/negative-compile.sh`'s cl leg
-  is the Windows coverage for anything header-only.
+  is the Windows coverage for anything header-only. Under
+  `buildutil/msvc-wine:latest` that leg fails every compile with D8037, a
+  fault of that image; an msvc-wine 18 image compiles. There
+  the two number-text rows and the short-options bad-tag and bare-dash rows
+  fail on cl, and the exception format rows' expected text is libstdc++'s,
+  which cl's refusals do not carry.
 - buildutil's reflect generator claims any header that spells
   `reflect_scheme` and emits its own, so a test fixture whose schemes are
   hand-written must be a `.inc`, not a `.hpp` (`cli/unit.test/*-cli.inc`).
+- gcc with any of `-fsanitize=null`, `nonnull-attribute` or
+  `returns-nonnull-attribute` (all part of `-fsanitize=undefined`) cannot
+  constant-evaluate a format string viewed from a template parameter
+  object, so under it an `Exception` alias can be neither constructed nor
+  caught; clang is unaffected. The null check it trips is
+  [GCC PR 71962](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=71962).
 
 ## License
 

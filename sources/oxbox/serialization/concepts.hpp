@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 namespace oxbox::serialization
 {
@@ -206,8 +207,24 @@ namespace oxbox::serialization
   template <typename T>
   concept HasEnumMap = HasReflectedEnumMap<T>;
 
+  // A run of octets the wire can carry whole instead of one element at a time.
+  template <typename T>
+  concept ByteRange = std::ranges::contiguous_range<T>
+    && std::same_as<std::remove_cvref_t<std::ranges::range_value_t<T>>,
+                    std::byte>;
+
   template <typename T, typename W>
   concept WriteNativeCapable = requires(W& w, T const& value) { w.WriteNative(value); };
+
+  template <typename W>
+  concept WriteBytesCapable = requires(W& w, std::span<std::byte const> b) {
+    w.WriteBytes(b);
+  };
+
+  template <typename R>
+  concept ReadBytesCapable = requires(R& r) {
+    { r.ReadBytes() } -> std::same_as<std::vector<std::byte>>;
+  };
 
   template <typename T, typename R>
   concept ReadNativeCapable = requires(R& r) {

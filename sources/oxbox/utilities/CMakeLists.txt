@@ -1,1 +1,5 @@
 Init_submodule()
+Add_negative_compile_tests(exception)
+Add_negative_compile_tests(hex-literal)
+Add_negative_compile_tests(growing-writer)
+Add_negative_compile_tests(number-text)

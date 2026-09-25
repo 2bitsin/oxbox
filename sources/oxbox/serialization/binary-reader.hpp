@@ -10,7 +10,10 @@
 #include <type_traits>
 
 #include <filesystem>
+#include <string>
+#include <string_view>
 #include <unordered_map>
+#include <vector>
 
 namespace oxbox::serialization::detail::binary_reader
 {
@@ -59,6 +62,15 @@ namespace oxbox::serialization::detail::binary_reader
     auto ReadNative() -> E
     {
       return static_cast<E>(Read<std::int64_t>());
+    }
+
+    auto ReadBytes() -> std::vector<std::byte>
+    {
+      auto const wire{ Wire() };
+      if (wire.TagAt(_cur) != TAG_STRING)
+        ThrowType("octets");
+      auto const payload{ wire.PayloadOf(_cur).bytes };
+      return { payload.begin(), payload.end() };
     }
 
     auto IsNull() const -> bool { return Wire().TagAt(_cur) == TAG_NULL; }
@@ -129,16 +141,16 @@ namespace oxbox::serialization::detail::binary_reader
     {
       if constexpr (!NAMED) {
         if (!HasField(name))
-          throw MissingField{ _path / std::filesystem::path{ name } };
+          throw MissingField{ Path() / std::filesystem::path{ name } };
         EnterNext();
-        _path = _path.parent_path() / std::filesystem::path{ name };
+        _trail.back() = std::string{ name };
         return;
       }
       auto const found{ _nav.back().fields.find(std::string{ name }) };
       if (found == _nav.back().fields.end())
-        throw MissingField{ _path / std::filesystem::path{ name } };
+        throw MissingField{ Path() / std::filesystem::path{ name } };
       _cur = found->second;
-      _path /= std::filesystem::path{ name };
+      _trail.emplace_back(name);
     }
     auto LeaveField() -> void
     {
@@ -147,7 +159,7 @@ namespace oxbox::serialization::detail::binary_reader
         return;
       }
       _cur = _nav.back().node;
-      _path = _path.parent_path();
+      _trail.pop_back();
     }
 
     auto EnterArray() -> void
@@ -176,17 +188,25 @@ namespace oxbox::serialization::detail::binary_reader
       auto& level{ _nav.back() };
       level.next = Wire().NextNode(level.cursor, level.end);
       _cur = level.cursor;
-      _path /= std::filesystem::path{ "[]" };
+      _trail.emplace_back(ITEM);
     }
     auto LeaveNext() -> void
     {
       auto& level{ _nav.back() };
       level.cursor = level.next;
       _cur = level.node;
-      _path = _path.parent_path();
+      _trail.pop_back();
     }
 
-    auto Path() const -> std::filesystem::path const& { return _path; }
+    // The trail is what a thrown error names, so it is spelled as a path
+    // only when one is thrown.
+    auto Path() const -> std::filesystem::path
+    {
+      std::filesystem::path path;
+      for (auto const& name : _trail)
+        path /= std::filesystem::path{ name };
+      return path;
+    }
 
   private:
     struct Level
@@ -198,15 +218,17 @@ namespace oxbox::serialization::detail::binary_reader
       std::size_t end{ 0 };
     };
 
+    static constexpr std::string_view ITEM{ "[]" };
+
     auto Wire() const -> Cursor { return Cursor{ Bytes{ _data } }; }
     [[noreturn]] auto ThrowType(std::string_view expected) const -> void
     {
-      throw TypeMismatch{ _path, std::string{ expected } };
+      throw TypeMismatch{ Path(), std::string{ expected } };
     }
 
     Blob _data;
     std::size_t _cur{ 0 };
     std::vector<Level> _nav;
-    std::filesystem::path _path;
+    std::vector<std::string> _trail;
   };
 } // namespace oxbox::serialization::detail::binary_reader

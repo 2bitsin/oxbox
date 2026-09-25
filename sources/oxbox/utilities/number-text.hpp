@@ -7,15 +7,34 @@
 #include "oxbox/utilities/text.hpp"
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <concepts>
 #include <cstddef>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
 
 namespace oxbox::utilities::detail::number_text
 {
+  // The whole view or nothing: "12abc" read as 12 is a corrupt input silently
+  // accepted, and an empty view is nullopt because absent and zero differ.
+  template <std::integral _Number>
+  inline constexpr auto WholeNumber(std::string_view input, int base = 10) -> std::optional<_Number>
+  {
+    if (input.empty())
+      return std::nullopt;
+    _Number value{ };
+    auto const stop{ input.data() + input.size() };
+    auto const parsed{ std::from_chars(input.data(), stop, value, base) };
+    if (parsed.ec != std::errc{ } || parsed.ptr != stop)
+      return std::nullopt;
+    return value;
+  }
+
   // The values are the bases, so `static_cast<int>(radix)` is the base.
   enum class Radix : U08 { BINARY = 2u, OCTAL = 8u, DECIMAL = 10u, HEX = 16u };
 
@@ -51,10 +70,9 @@ namespace oxbox::utilities::detail::number_text
     return std::nullopt;
   }
 
-  // Not constexpr because text.hpp's WholeNumber is not.
   template <std::integral _Number>
-  inline auto ParseNumber(std::string_view text,
-                          Radix fallback = Radix::DECIMAL)
+  inline constexpr auto ParseNumber(std::string_view text,
+                                    Radix fallback = Radix::DECIMAL)
     -> std::optional<_Number>
   {
     auto const marked{ RadixMarker(text, fallback) };
@@ -74,7 +92,7 @@ namespace oxbox::utilities::detail::number_text
 
   // 'b' is a hex letter, so `0b1010` would otherwise read as 0x0B1010.
   template <std::integral _Number>
-  inline auto ParseNumber(std::string_view text, AsWrittenT)
+  inline constexpr auto ParseNumber(std::string_view text, AsWrittenT)
     -> std::optional<_Number>
   {
     if (RadixMarker(text, Radix::DECIMAL))
@@ -86,6 +104,67 @@ namespace oxbox::utilities::detail::number_text
     return ParseNumber<_Number>(text, looks_hex ? Radix::HEX : Radix::DECIMAL);
   }
 
+  template <std::integral _Number, std::size_t _Count>
+  inline constexpr auto ParseNumbers(std::string_view text, char separator,
+                                     Radix fallback = Radix::DECIMAL)
+    -> std::optional<std::array<_Number, _Count>>
+  {
+    auto fields{ text | std::views::split(separator) };
+    if (std::ranges::distance(fields) != static_cast<std::ptrdiff_t>(_Count))
+      return std::nullopt;
+    std::array<_Number, _Count> values{ };
+    for (auto&& [slot, field] : std::views::zip(values, fields))
+    {
+      auto const value{ ParseNumber<_Number>(std::string_view{ field }, fallback) };
+      if (!value)
+        return std::nullopt;
+      slot = *value;
+    }
+    return values;
+  }
+
+  // The first whitespace-delimited token after the first marker; an empty marker is nullopt.
+  template <std::integral _Number>
+  inline constexpr auto ParseNumberAfter(std::string_view line, std::string_view marker,
+                                         Radix fallback = Radix::DECIMAL) -> std::optional<_Number>
+  {
+    if (marker.empty())
+      return std::nullopt;
+    auto const at{ line.find(marker) };
+    if (at == std::string_view::npos)
+      return std::nullopt;
+    auto const remainder{ Trimmed(line.substr(at + marker.size())) };
+    return ParseNumber<_Number>(remainder.substr(0u, remainder.find_first_of(WHITESPACE)),
+                                fallback);
+  }
+
+  template <std::unsigned_integral _Number>
+  inline constexpr auto NumberDigits(_Number magnitude, Radix radix, std::size_t width,
+                                     HexCase casing) -> std::string
+  {
+    auto const base{ static_cast<_Number>(radix) };
+    auto const digits{ HexDigits(casing) };
+    // Least significant digit first, then reversed; zero still writes a '0'.
+    std::string out;
+    do
+    {
+      out.push_back(digits[static_cast<std::size_t>(magnitude % base)]);
+      magnitude = static_cast<_Number>(magnitude / base);
+    }
+    while (magnitude != _Number{ 0 });
+    out.resize(std::max(out.size(), width), '0');
+    std::ranges::reverse(out);
+    return out;
+  }
+
+  template <std::integral _Number>
+  inline constexpr auto IsNegative(_Number value) noexcept -> bool
+  {
+    if constexpr (std::is_signed_v<_Number>)
+      return value < _Number{ 0 };
+    return false;
+  }
+
   // Decimal writes a minus sign; the power-of-two radices write the value's
   // two's-complement bit pattern. `width` is a minimum, never a truncation.
   template <std::integral _Number>
@@ -95,30 +174,11 @@ namespace oxbox::utilities::detail::number_text
                                      HexCase casing = HexCase::UPPER) -> std::string
   {
     using Unsigned = std::make_unsigned_t<_Number>;
-    auto const base{ static_cast<Unsigned>(radix) };
-    auto const digits{ HexDigits(casing) };
-
-    bool negative{ false };
-    Unsigned magnitude{ static_cast<Unsigned>(value) };
-    if constexpr (std::is_signed_v<_Number>)
-      if (radix == Radix::DECIMAL && value < _Number{ 0 })
-      {
-        negative = true;
-        // Negating the most negative value of a signed type is undefined.
-        magnitude = static_cast<Unsigned>(Unsigned{ 0 } - magnitude);
-      }
-
-    // Least significant digit first, then reversed; zero still writes a '0'.
-    std::string out;
-    do
-    {
-      out.push_back(digits[static_cast<std::size_t>(magnitude % base)]);
-      magnitude = static_cast<Unsigned>(magnitude / base);
-    }
-    while (magnitude != Unsigned{ 0 });
-    while (out.size() < width)
-      out.push_back('0');
-    std::ranges::reverse(out);
+    auto const negative{ radix == Radix::DECIMAL && IsNegative(value) };
+    // Negating the most negative value of a signed type is undefined.
+    auto const magnitude{ negative ? static_cast<Unsigned>(Unsigned{ 0 } - static_cast<Unsigned>(value))
+                                   : static_cast<Unsigned>(value) };
+    auto const out{ NumberDigits(magnitude, radix, width, casing) };
 
     std::string composed;
     composed.reserve(out.size() + prefix.size() + (negative ? 1u : 0u));
@@ -148,6 +208,8 @@ namespace oxbox::utilities
   using detail::number_text::HexText;
   using detail::number_text::Marked;
   using detail::number_text::ParseNumber;
+  using detail::number_text::ParseNumberAfter;
+  using detail::number_text::ParseNumbers;
   using detail::number_text::Radix;
   using detail::number_text::RadixMarker;
 }

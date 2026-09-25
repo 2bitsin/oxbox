@@ -17,13 +17,13 @@ case "$lane" in
            wineserver -p
            trap "wineserver -k >/dev/null 2>&1 || true" EXIT
            wine wineboot >/dev/null 2>&1 || true'
-    cmd=(buildutil --jobs 7 build --release --no-tests --no-upload)
+    cmd=(buildutil --jobs 7 build --release --no-tests --skip-dependency-upload-so-everyone-rebuilds-from-source)
     ;;
   macos)
     image=${OXBOX_OSXCROSS_IMAGE:?set OXBOX_OSXCROSS_IMAGE to the osxcross image}
     env_args=()
     setup='. /w/tools/osxcross-env.sh'
-    cmd=(buildutil build --release --no-tests --compiler osxcross --no-upload)
+    cmd=(buildutil --jobs 7 build --release --no-tests --compiler osxcross --skip-dependency-upload-so-everyone-rebuilds-from-source)
     ;;
   *)
     echo "usage: $0 <macos|windows> [buildutil args...]" >&2

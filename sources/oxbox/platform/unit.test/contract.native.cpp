@@ -26,7 +26,8 @@ namespace
   constexpr std::string_view UNWRITTEN{ "the big-endian road" };
 
   using Complaining = Contracts<ContractMode::COMPLAIN>;
-  using Stopping = Contracts<ContractMode::STOP>;
+  using Stopping    = Contracts<ContractMode::STOP>;
+  using Throwing    = Contracts<ContractMode::THROW>;
 
   struct NoFormatter { int value{ }; };
 
@@ -137,4 +138,23 @@ TEST(PlatformContractReport, AComplainedSiteSaysItsLineEveryTimeItIsHit)
   EXPECT_EQ(testing::internal::GetCapturedStderr(),
             SaidLine("precondition", where, NEEDED)
               + SaidLine("precondition", where, NEEDED));
+}
+
+TEST(PlatformContractReport, AThrownFailureSaysItsLineBeforeItIsThrown)
+{
+  auto const where{ std::source_location::current() };
+  testing::internal::CaptureStderr();
+  EXPECT_THROW(Throwing::Expects(false, NEEDED, where),
+               platform::ContractFailure);
+  EXPECT_EQ(testing::internal::GetCapturedStderr(),
+            SaidLine("precondition", where, NEEDED));
+}
+
+TEST(PlatformContractReport, AThrownUnreachableValueSaysItsLineToo)
+{
+  auto const where{ std::source_location::current() };
+  testing::internal::CaptureStderr();
+  EXPECT_THROW(Throwing::Unreachable(7, where), platform::ContractFailure);
+  EXPECT_EQ(testing::internal::GetCapturedStderr(),
+            SaidLine("unreachable", where, "7"));
 }

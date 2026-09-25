@@ -4,7 +4,9 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstddef>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -28,6 +30,26 @@ static_assert(RadixMarker("1234", Radix::DECIMAL) == std::nullopt);
 static_assert(RadixMarker("0b1010", Radix::HEX) == std::nullopt);
 
 // ---- parsing ---------------------------------------------------------
+
+TEST(WholeNumber, AcceptsTheWholeStringAndNothingLess)
+{
+  EXPECT_EQ(detail::number_text::WholeNumber<int>("200"), 200);
+  EXPECT_EQ(detail::number_text::WholeNumber<std::size_t>("1a", 16), 26u);
+  EXPECT_EQ(detail::number_text::WholeNumber<int>("0"), 0);
+}
+
+TEST(WholeNumber, TrailingJunkIsRejectedNotTruncated)
+{
+  // the whole point: a prefix match here is a value silently misread
+  EXPECT_FALSE(detail::number_text::WholeNumber<int>("12abc").has_value());
+  EXPECT_FALSE(detail::number_text::WholeNumber<int>("12 ").has_value());
+  EXPECT_FALSE(detail::number_text::WholeNumber<int>("1a").has_value());  // decimal
+}
+
+TEST(WholeNumber, EmptyIsAbsentAndNotZero)
+{
+  EXPECT_FALSE(detail::number_text::WholeNumber<int>("").has_value());
+}
 
 TEST(ParseNumber, ReadsEitherCase)
 {
@@ -147,6 +169,70 @@ TEST(ParseNumber, AsWrittenHonoursTheMarkerItDocuments)
   // a token that names no base is still the letters' to decide
   EXPECT_EQ(ParseNumber<U32>("0755", AsWritten), 755u);
   EXPECT_EQ(ParseNumber<U32>("1a0", AsWritten), 0x1A0u);
+}
+
+static_assert(detail::number_text::WholeNumber<int>("42") == 42);
+static_assert(detail::number_text::WholeNumber<int>(std::string_view{ }) == std::nullopt);
+static_assert(ParseNumber<int>("0x2a") == 42);
+static_assert(ParseNumber<int>("2a", AsWritten) == 42);
+static_assert(ParseNumber<int>("0x-1") == std::nullopt);
+static_assert(ParseNumbers<int, 2>("640x480", 'x') == std::array{ 640, 480 });
+static_assert(ParseNumberAfter<int>("rate= 60 hz", "rate=") == 60);
+static_assert(ParseNumberAfter<int>("rate=60", "") == std::nullopt);
+
+TEST(ParseNumbers, ReadsExactlyTheRequestedFields)
+{
+  EXPECT_EQ((ParseNumbers<int, 2>("640x480", 'x')), (std::array{ 640, 480 }));
+  EXPECT_EQ((ParseNumbers<int, 2>("16:9", ':')), (std::array{ 16, 9 }));
+  EXPECT_EQ((ParseNumbers<int, 2>("12 34", ' ')), (std::array{ 12, 34 }));
+  EXPECT_EQ((ParseNumbers<int, 2>("ff:10", ':', Radix::HEX)), (std::array{ 255, 16 }));
+  EXPECT_EQ((ParseNumbers<int, 2>("0x10:0b11", ':')), (std::array{ 16, 3 }));
+}
+
+TEST(ParseNumbers, RejectsEmptyMissingExtraAndInvalidFields)
+{
+  for (auto const text : { "640x", "x480", "640x480x3", "640", "", "x", "640xx480",
+                           "abcx480", "640xabc", "640x480junk", "640x 480" })
+    EXPECT_EQ((ParseNumbers<int, 2>(text, 'x')), std::nullopt) << text;
+  EXPECT_EQ((ParseNumbers<U08, 2>("256:1", ':')), std::nullopt);
+}
+
+TEST(ParseNumbers, SupportsZeroAndOneField)
+{
+  EXPECT_EQ((ParseNumbers<int, 0>("", ':')), (std::array<int, 0>{ }));
+  EXPECT_EQ((ParseNumbers<int, 0>("1", ':')), std::nullopt);
+  EXPECT_EQ((ParseNumbers<int, 1>("42", ':')), (std::array{ 42 }));
+  EXPECT_EQ((ParseNumbers<int, 1>("", ':')), std::nullopt);
+  EXPECT_EQ((ParseNumbers<int, 1>("42:", ':')), std::nullopt);
+}
+
+TEST(ParseNumbers, PreservesSignedLimitsAndRejectsOverflow)
+{
+  EXPECT_EQ((ParseNumbers<int, 2>("-1:-2", ':')), (std::array{ -1, -2 }));
+  EXPECT_EQ((ParseNumbers<S08, 2>("-128:127", ':')),
+            (std::array{ std::numeric_limits<S08>::min(), std::numeric_limits<S08>::max() }));
+  EXPECT_EQ((ParseNumbers<S08, 2>("-129:127", ':')), std::nullopt);
+  // Separators delimit fields before radix markers are interpreted.
+  EXPECT_EQ((ParseNumbers<int, 2>("0x10x0x20", 'x')), std::nullopt);
+}
+
+TEST(ParseNumberAfter, ReadsTheFirstMarkedToken)
+{
+  EXPECT_EQ(ParseNumberAfter<int>("rate=60 hz", "rate="), 60);
+  EXPECT_EQ(ParseNumberAfter<int>("t: -5", "t: "), -5);
+  EXPECT_EQ(ParseNumberAfter<int>("rate=60 rate=70", "rate="), 60);
+  EXPECT_EQ(ParseNumberAfter<int>("rate= \t60\r\nhz", "rate="), 60);
+  EXPECT_EQ(ParseNumberAfter<int>("rate=ff", "rate=", Radix::HEX), 255);
+  EXPECT_EQ(ParseNumberAfter<int>("rate=0b11", "rate="), 3);
+}
+
+TEST(ParseNumberAfter, RejectsAbsentEmptyAndInvalidTokens)
+{
+  for (auto const line : { "60 hz", "rate=", "rate= \t", "rate=abc", "rate=60hz",
+                           "rate=abc rate=60", "" })
+    EXPECT_EQ(ParseNumberAfter<int>(line, "rate="), std::nullopt) << line;
+  EXPECT_EQ(ParseNumberAfter<U08>("rate=256", "rate="), std::nullopt);
+  EXPECT_EQ(ParseNumberAfter<int>("rate=60", ""), std::nullopt);
 }
 
 // ---- formatting ------------------------------------------------------

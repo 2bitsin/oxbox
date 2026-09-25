@@ -9,6 +9,7 @@
 
 #include <_buildutil/reflect.hpp>
 
+#include <algorithm>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -119,9 +120,13 @@ namespace oxbox::cli::detail::rest_collector
 
         if constexpr (KIND == RestKind::JOINED) {
           // Lossy: a token with a space is indistinguishable from two.
-          slot = tail
-               | std::views::join_with(' ')
-               | stdr::to<std::string>();
+          slot = std::ranges::fold_left(
+            tail, std::string{},
+            [](std::string joined, std::string_view token) {
+              if (!joined.empty()) joined += ' ';
+              joined += token;
+              return joined;
+            });
 
         } else if constexpr (KIND != RestKind::NONE) {
           slot.assign(tail.begin(), tail.end());

@@ -13,10 +13,13 @@
 #include <bit>
 #include <concepts>
 #include <cstddef>
+#include <functional>
 #include <span>
 #include <stdexcept>
 #include <string_view>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
 namespace oxbox::utilities::detail::serialization {
 
@@ -252,12 +255,84 @@ namespace oxbox::utilities::detail::serialization {
     bool          _sound{ true };
   };
 
+  template <std::endian ENDIAN = std::endian::little>
+  class GrowingWriter
+  {
+  public:
+    constexpr          GrowingWriter()                                      = default;
+    explicit constexpr GrowingWriter(std::vector<std::byte>& into) noexcept : _external{ &into } { }
+
+    template <typename _Type>
+    constexpr auto Put(_Type value) -> void
+    {
+      static_assert(std::integral<_Type> || std::is_enum_v<_Type>,
+                    "GrowingWriter::Put requires an integral or enum type");
+      if constexpr (std::is_enum_v<_Type>)
+        Put(std::to_underlying(value));
+      else if constexpr (std::integral<_Type>)
+      {
+        auto const offset{ Size() };
+        Zero(sizeof(_Type));
+        detail::serialization::Store<_Type, ENDIAN>(
+          value, WritableBytes{ Storage() }.subspan(offset), NoAdvance);
+      }
+    }
+
+    constexpr auto Zero(std::size_t count) -> void
+    { Storage().insert(Storage().end(), count, std::byte{ }); }
+
+    constexpr auto Append(utilities::Bytes bytes) -> void
+    {
+      if (bytes.empty())
+        return;
+      if (Aliases(bytes))
+      {
+        auto const copy{ std::vector<std::byte>(bytes.begin(), bytes.end()) };
+        Storage().insert(Storage().end(), copy.begin(), copy.end());
+        return;
+      }
+      Storage().insert(Storage().end(), bytes.begin(), bytes.end());
+    }
+
+    auto Text(std::string_view value) -> void { Append(AsBytes(value)); }
+    constexpr auto Text(std::u16string_view value) -> void
+    { std::ranges::for_each(value, [this](char16_t unit) { Put<char16_t>(unit); }); }
+
+    [[nodiscard]] constexpr auto Size()    const noexcept -> std::size_t            { return Storage().size(); }
+    [[nodiscard]] constexpr auto Bytes()   const noexcept -> utilities::Bytes       { return Storage(); }
+    [[nodiscard]] constexpr auto Release()                -> std::vector<std::byte> { return std::exchange(Storage(), { }); }
+
+  private:
+    constexpr auto Aliases(utilities::Bytes bytes) const noexcept -> bool
+    {
+      if (Storage().empty())
+        return false;
+      if consteval
+      {
+        return std::ranges::any_of(Storage(), [&](auto const& byte) { return &byte == bytes.data(); });
+      }
+      else
+      {
+        auto const less{ std::less_equal<std::byte const*>{ } };
+        return less(Storage().data(), bytes.data())
+            && less(bytes.data() + bytes.size(), Storage().data() + Storage().size());
+      }
+    }
+
+    constexpr auto Storage()       noexcept -> std::vector<std::byte>&       { return _external ? *_external : _owned; }
+    constexpr auto Storage() const noexcept -> std::vector<std::byte> const& { return _external ? *_external : _owned; }
+
+    std::vector<std::byte>  _owned{ };
+    std::vector<std::byte>* _external{ };
+  };
+
 }
 
 namespace oxbox::utilities {
   using detail::serialization::BoundedReader;
   using detail::serialization::BoundedWriter;
   using detail::serialization::Fetch;
+  using detail::serialization::GrowingWriter;
   using detail::serialization::NoAdvance;
   using detail::serialization::Scalar;
   using detail::serialization::Store;

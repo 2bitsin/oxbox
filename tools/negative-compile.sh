@@ -7,9 +7,12 @@
 #   tools/negative-compile.sh --no-msvc        # skip the container leg
 #   tools/negative-compile.sh --case hex       # only rows whose name matches
 #   tools/negative-compile.sh --fixture FILE --expect TEXT
+#   tools/negative-compile.sh --list           # the units, one compile each
+#   tools/negative-compile.sh --compiler gcc --unit NAME   # one compile
 #
 # The cl leg reads OXBOX_MSVC_IMAGE. A build tree must exist for the one
-# generated header parse.hpp includes, <_buildutil/reflect.hpp>.
+# generated header parse.hpp includes, <_buildutil/reflect.hpp>. Exit 77 is
+# a run where every selected leg was skipped and nothing was judged.
 
 set -euo pipefail
 
@@ -24,7 +27,14 @@ readonly REPO="$(cd -- "$HERE/.." && pwd)"
 # an IFS whitespace character `read` collapses runs of.
 readonly FS=$'\x1f'
 CASES=(
+  "number-text.parse-numbers.floating"$FS"$HERE/negative-compile/parse-numbers.floating.cpp"$FS"constraints not satisfied"$FS"is_integral_v"$FS"$HERE/negative-compile/number-text.accepts.cpp"
+  "number-text.parse-number-after.floating"$FS"$HERE/negative-compile/parse-number-after.floating.cpp"$FS"constraints not satisfied"$FS"is_integral_v"$FS"$HERE/negative-compile/number-text.accepts.cpp"
+  "growing-writer.non-integral"$FS"$HERE/negative-compile/growing-writer.non-integral.cpp"$FS"GrowingWriter::Put requires an integral or enum type"$FS""$FS"$HERE/negative-compile/growing-writer.accepts.cpp"
   "one-name-per-declaration"$FS"$HERE/negative-compile/one-name-per-declaration.collides.cpp"$FS"answer to the same command-line name"$FS"content-type"$FS"$HERE/negative-compile/one-name-per-declaration.distinct.cpp"
+  "exception.missing-argument"$FS"$HERE/negative-compile/exception.missing-argument.cpp"$FS"__invalid_arg_id_in_format_string"$FS"FORMAT_STRING"$FS"$HERE/negative-compile/exception.accepts.cpp"
+  "exception.wrong-type"$FS"$HERE/negative-compile/exception.wrong-type.cpp"$FS"__failed_to_parse_format_spec"$FS"FORMAT_STRING"$FS"$HERE/negative-compile/exception.accepts.cpp"
+  "exception.named-in-catch"$FS"$HERE/negative-compile/exception.named-in-catch.cpp"$FS"__invalid_arg_id_in_format_string"$FS"FORMAT_STRING"$FS"$HERE/negative-compile/exception.accepts.cpp"
+  "exception.final-what"$FS"$HERE/negative-compile/exception.final-what.cpp"$FS"overrid"$FS"OwnedText"$FS"$HERE/negative-compile/exception.overrides-what.cpp"
   "hex-literal.binary-form"$FS"$HERE/negative-compile/hex-literal.binary-form.cpp"$FS"a leading 0 that is not 0x is not hex"$FS""$FS"$HERE/negative-compile/hex-literal.accepts.cpp"
   "hex-literal.stray-character"$FS"$HERE/negative-compile/hex-literal.stray-character.cpp"$FS"a stray character, or an odd number of digits"$FS""$FS"$HERE/negative-compile/hex-literal.accepts.cpp"
   "short-options.duplicate.verbose"$FS"$HERE/negative-compile/short-options.duplicate.cpp"$FS"two members claim the same short spelling"$FS"verbose"$FS"$HERE/negative-compile/short-options.distinct.cpp"
@@ -35,6 +45,9 @@ CASES=(
 
 WITH_MSVC=1
 ONLY=""
+ONLY_UNIT=""
+LEGS=( gcc clang cl )
+LIST=0
 AD_HOC_FIXTURE=""
 AD_HOC_EXPECT=""
 AD_HOC_SPELLING=""
@@ -43,6 +56,9 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --no-msvc)  WITH_MSVC=0; shift ;;
     --case)     ONLY="$2"; shift 2 ;;
+    --unit)     ONLY_UNIT="$2"; shift 2 ;;
+    --compiler) LEGS=( "$2" ); shift 2 ;;
+    --list)     LIST=1; shift ;;
     --fixture)  AD_HOC_FIXTURE="$(cd -- "$(dirname -- "$2")" && pwd)/$(basename -- "$2")"; shift 2 ;;
     --expect)   AD_HOC_EXPECT="$2"; shift 2 ;;
     --spelling) AD_HOC_SPELLING="$2"; shift 2 ;;
@@ -73,12 +89,54 @@ if [ -n "$ONLY" ]; then
   CASES=( "${SELECTED[@]}" )
 fi
 
+# A unit is one compile: each row's refusal, and each distinct control once.
+# Its fields: kind (refuse or accept), name, source, refusal, spelling.
+declare -a UNITS=( )
+declare -A CONTROLS=( )
+for row in "${CASES[@]}"; do
+  IFS="$FS" read -r name fixture refusal spelling control <<< "$row"
+  UNITS+=( "refuse$FS$name$FS$fixture$FS$refusal$FS$spelling" )
+  if [ -n "$control" ] && [ -z "${CONTROLS[$control]:-}" ]; then
+    CONTROLS[$control]=1
+    UNITS+=( "accept$FS$(basename -- "$control" .cpp)$FS$control$FS$FS" )
+  fi
+done
+
+if [ -n "$ONLY_UNIT" ]; then
+  declare -a CHOSEN=( )
+  for unit in "${UNITS[@]}"; do
+    IFS="$FS" read -r _ name _ <<< "$unit"
+    if [ "$name" = "$ONLY_UNIT" ]; then CHOSEN+=( "$unit" ); fi
+  done
+  if [ "${#CHOSEN[@]}" -eq 0 ]; then
+    echo "negative-compile: no unit is named '$ONLY_UNIT' (see --list)" >&2
+    exit 2
+  fi
+  UNITS=( "${CHOSEN[@]}" )
+fi
+
+if [ "$LIST" -eq 1 ]; then
+  for unit in "${UNITS[@]}"; do
+    IFS="$FS" read -r _ name _ <<< "$unit"
+    printf '%s\n' "$name"
+  done
+  exit 0
+fi
+
+for leg in "${LEGS[@]}"; do
+  case "$leg" in
+    gcc|clang|cl) ;;
+    *) echo "negative-compile: unknown compiler '$leg' (gcc, clang or cl)" >&2; exit 2 ;;
+  esac
+done
+
 FAILURES=0
+PASSES=0
 SKIPS=0
 declare -a SUMMARY=( )
 
 Note()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
-Pass()  { printf '   \033[32mok\033[0m      %s\n' "$*"; SUMMARY+=( "ok      $*" ); }
+Pass()  { printf '   \033[32mok\033[0m      %s\n' "$*"; SUMMARY+=( "ok      $*" ); PASSES=$(( PASSES + 1 )); }
 Fail()  { printf '   \033[31mFAILED\033[0m  %s\n' "$*"; SUMMARY+=( "FAILED  $*" ); FAILURES=$(( FAILURES + 1 )); }
 Skip()  { printf '   \033[33mSKIPPED\033[0m %s\n' "$*"; SUMMARY+=( "SKIPPED $*" ); SKIPS=$(( SKIPS + 1 )); }
 
@@ -110,13 +168,14 @@ trap 'rm -rf "$WORK"' EXIT
 
 printf 'negative-compile: %s\n' "$REPO"
 printf '  reflect header from:       %s\n' "${REFLECT_ROOT#$REPO/}"
-printf '  cases (%d):\n' "${#CASES[@]}"
-for row in "${CASES[@]}"; do
-  IFS="$FS" read -r name fixture refusal spelling control <<< "$row"
-  printf '    %-28s refuse %s\n' "$name" "${fixture#$REPO/}"
-  printf '    %-28s expect "%s"%s\n' "" "$refusal" \
-         "$([ -n "$spelling" ] && printf ' naming "%s"' "$spelling")"
-  [ -n "$control" ] && printf '    %-28s accept %s\n' "" "${control#$REPO/}"
+printf '  units (%d) on %s:\n' "${#UNITS[@]}" "${LEGS[*]}"
+for unit in "${UNITS[@]}"; do
+  IFS="$FS" read -r kind name source refusal spelling <<< "$unit"
+  printf '    %-40s %s %s\n' "$name" "$kind" "${source#$REPO/}"
+  if [ "$kind" = refuse ]; then
+    printf '    %-40s expect "%s"%s\n' "" "$refusal" \
+           "$([ -n "$spelling" ] && printf ' naming "%s"' "$spelling")"
+  fi
 done
 
 # One standard for gcc, clang and cl.
@@ -166,7 +225,42 @@ Judge_control()
   Pass "$label: the control compiles, so the guard is not simply always on"
 }
 
+Judge_unit()
+{
+  local label="$1" kind="$2" status="$3" log="$4" refusal="$5" spelling="$6"
+
+  case "$kind" in
+    refuse) Judge_refusal "$label" "$status" "$log" "$refusal" "$spelling" ;;
+    accept) Judge_control "$label" "$status" "$log" ;;
+    *)      Fail "$label: unit kind '$kind' is neither refuse nor accept" ;;
+  esac
+}
+
+# Each unit's source and log are appended to the compile command it is given.
+Run_units()
+{
+  local label="$1"; shift
+
+  local unit kind name source refusal spelling
+  for unit in "${UNITS[@]}"; do
+    IFS="$FS" read -r kind name source refusal spelling <<< "$unit"
+    local log="$WORK/$label.$name.log"
+    set +e
+    "$@" "$source" "$log"
+    local status=$?
+    set -e
+    Judge_unit "$label/$name" "$kind" "$status" "$log" "$refusal" "$spelling"
+  done
+}
+
 # The flags mirror what buildutil hands these two; a judged fixture never links.
+Host_compile()
+{
+  local compiler="$1" budget="$2" source="$3" log="$4"
+
+  "$compiler" -std=c++26 "$budget" -I"$REFLECT_ROOT" -I"$REPO/sources" \
+    -c -o "$WORK/out.o" "$source" > "$log" 2>&1
+}
 
 Host_leg()
 {
@@ -177,38 +271,19 @@ Host_leg()
     Skip "$label: no '$compiler' on PATH"
     return
   fi
-
-  local flags=( -std=c++26 "$budget" -I"$REFLECT_ROOT" -I"$REPO/sources" -c -o "$WORK/out.o" )
-
-  local row name fixture refusal spelling control
-  for row in "${CASES[@]}"; do
-    IFS="$FS" read -r name fixture refusal spelling control <<< "$row"
-    local case_label="$label/$name"
-
-    set +e
-    "$compiler" "${flags[@]}" "$fixture" > "$WORK/$label.$name.refusal.log" 2>&1
-    local refused=$?
-    set -e
-    Judge_refusal "$case_label" "$refused" "$WORK/$label.$name.refusal.log" \
-                  "$refusal" "$spelling"
-
-    [ -n "$control" ] || continue
-    set +e
-    "$compiler" "${flags[@]}" "$control" > "$WORK/$label.$name.control.log" 2>&1
-    local accepted=$?
-    set -e
-    Judge_control "$case_label" "$accepted" "$WORK/$label.$name.control.log"
-  done
+  Run_units "$label" Host_compile "$compiler" "$budget"
 }
 
 # cl's banner and the file name it echoes are filtered out of the diagnostic.
+# The repo goes in read-only, so a container leg touches no working tree.
 Msvc_compile()
 {
-  local source="$1" log="$2" reflect="$3"
+  local source="$1" log="$2"
 
   docker run --rm -v "$REPO:/src:ro" -w /tmp "$MSVC_IMAGE" bash -lc \
     "/opt/msvc/bin/x64/cl /c /EHsc /permissive- /W4 /std:c++latest \
-     /I$reflect /I/src/sources /Fo:/tmp/negative-compile.obj $source" \
+     /I/src/${REFLECT_ROOT#$REPO/} /I/src/sources /Fo:/tmp/negative-compile.obj \
+     /src/${source#$REPO/}" \
     > "$log.raw" 2>&1
   local status=$?
 
@@ -216,8 +291,6 @@ Msvc_compile()
     "$log.raw" > "$log" || true
   return "$status"
 }
-
-# The repo goes in read-only, so a container leg touches no working tree.
 
 Msvc_leg()
 {
@@ -238,41 +311,27 @@ Msvc_leg()
     return
   fi
 
-  local reflect_in_container="/src/${REFLECT_ROOT#$REPO/}"
-
-  local row name fixture refusal spelling control
-  for row in "${CASES[@]}"; do
-    IFS="$FS" read -r name fixture refusal spelling control <<< "$row"
-    local case_label="$label/$name"
-
-    # Everything the container sees comes in under /src.
-    case "$fixture" in
-      "$REPO"/*) ;;
-      *) Skip "$case_label: fixture is outside $REPO, which the container mount cannot reach"
-         continue ;;
+  # Run_units reads UNITS, and this local shadows it with what the mount reaches.
+  local -a selected=( "${UNITS[@]}" )
+  local -a UNITS=( )
+  local unit name source
+  for unit in "${selected[@]}"; do
+    IFS="$FS" read -r _ name source _ <<< "$unit"
+    case "$source" in
+      "$REPO"/*) UNITS+=( "$unit" ) ;;
+      *) Skip "$label/$name: source is outside $REPO, which the container mount cannot reach" ;;
     esac
-
-    set +e
-    Msvc_compile "/src/${fixture#$REPO/}" "$WORK/$label.$name.refusal.log" \
-                 "$reflect_in_container"
-    local refused=$?
-    set -e
-    Judge_refusal "$case_label" "$refused" "$WORK/$label.$name.refusal.log" \
-                  "$refusal" "$spelling"
-
-    [ -n "$control" ] || continue
-    set +e
-    Msvc_compile "/src/${control#$REPO/}" "$WORK/$label.$name.control.log" \
-                 "$reflect_in_container"
-    local accepted=$?
-    set -e
-    Judge_control "$case_label" "$accepted" "$WORK/$label.$name.control.log"
   done
+  Run_units "$label" Msvc_compile
 }
 
-Host_leg gcc   g++     -fconstexpr-ops-limit=100000000
-Host_leg clang clang++ -fconstexpr-steps=100000000
-Msvc_leg
+for leg in "${LEGS[@]}"; do
+  case "$leg" in
+    gcc)   Host_leg gcc   g++     -fconstexpr-ops-limit=100000000 ;;
+    clang) Host_leg clang clang++ -fconstexpr-steps=100000000 ;;
+    cl)    Msvc_leg ;;
+  esac
+done
 
 Note "summary"
 printf '   %s\n' "${SUMMARY[@]}"
@@ -280,6 +339,10 @@ printf '   %s\n' "${SUMMARY[@]}"
 if [ "$FAILURES" -ne 0 ]; then
   printf '\nnegative-compile: %d failed, %d skipped.\n' "$FAILURES" "$SKIPS"
   exit 1
+fi
+if [ "$PASSES" -eq 0 ]; then
+  printf '\nnegative-compile: nothing was judged; %d skipped.\n' "$SKIPS"
+  exit 77
 fi
 if [ "$SKIPS" -ne 0 ]; then
   printf '\nnegative-compile: all run legs passed, but %d were SKIPPED and their branch is uncovered.\n' "$SKIPS"

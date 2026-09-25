@@ -6,7 +6,9 @@
 #include "oxbox/utilities/serdes.hpp"
 
 #include <bit>
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <type_traits>
 
 namespace oxbox::serialization::detail::binary_writer
@@ -32,6 +34,11 @@ namespace oxbox::serialization::detail::binary_writer
     auto Write(std::string_view v) -> void
     {
       Variable(TAG_STRING, oxbox::utilities::AsBytes(v));
+    }
+    // Octets go out as one length-prefixed run, the string node's own shape.
+    auto WriteBytes(std::span<std::byte const> v) -> void
+    {
+      Variable(TAG_STRING, v);
     }
     auto WriteNull() -> void { Emit(Blob{ std::byte{ TAG_NULL } }); }
 

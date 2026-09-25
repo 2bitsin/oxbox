@@ -9,10 +9,13 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -154,6 +157,34 @@ TEST(Json, EnumGivenAsNumberThrowsTypeMismatch) {
   EXPECT_THROW(
     oxbox::serialization::FromJson<Endpoint>(R"({"host":"x","level":42})"),
     oxbox::serialization::TypeMismatch);
+}
+
+// ── octets ───────────────────────────────────────────────────────────
+// A reader shows its values, so a run of octets is an array of integers
+// there, not the binary wire's one length-prefixed node.
+TEST(Json, OctetsAreAnArrayOfIntegers) {
+  namespace ser = oxbox::serialization;
+  std::vector<std::byte> const octets{ std::byte{ 0 }, std::byte{ 0x7f },
+                                       std::byte{ 0xff } };
+  auto const json{ ser::Serialize<ser::JsonFormat>(octets) };
+  EXPECT_EQ(json, "[0,127,255]");
+  EXPECT_EQ((ser::Deserialize<ser::JsonFormat, std::vector<std::byte>>(json)),
+            octets);
+  EXPECT_EQ((ser::Deserialize<ser::JsonFormat, std::array<std::byte, 3>>(
+               json)), (std::array{ std::byte{ 0 }, std::byte{ 0x7f },
+                                    std::byte{ 0xff } }));
+}
+
+TEST(Json, AnOctetOutOfRangeIsNamedWhereItStands) {
+  namespace ser = oxbox::serialization;
+  try {
+    static_cast<void>(
+      ser::Deserialize<ser::JsonFormat, std::vector<std::byte>>("[1,256]"));
+    FAIL() << "256 does not fit an octet";
+  } catch (ser::ParseError const& bad) {
+    EXPECT_NE(std::string_view{ bad.what() }.find("256"),
+              std::string_view::npos) << bad.what();
+  }
 }
 
 }  // namespace
