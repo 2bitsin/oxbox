@@ -72,7 +72,7 @@ namespace oxbox::cli::detail::rest_collector
   };
 
   inline constexpr std::size_t NO_COLLECTOR{
-    std::numeric_limits<std::size_t>::max() };
+    (std::numeric_limits<std::size_t>::max)() };
 
   struct RestCollector
   {

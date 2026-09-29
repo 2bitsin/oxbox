@@ -1,8 +1,9 @@
 #include "oxbox/platform/contract.hpp"
 
+#include "oxbox/platform/unit.test/contract-fixtures.hpp"
+
 #include <gtest/gtest.h>
 
-#include <format>
 #include <source_location>
 #include <stdexcept>
 #include <string>
@@ -12,36 +13,18 @@ using namespace oxbox;
 
 using platform::ContractMode;
 using platform::Contracts;
+using platform::unit_test::FailureLine;
+using platform::unit_test::NEEDED;
+using platform::unit_test::PROMISED;
+using platform::unit_test::UNWRITTEN;
+using platform::unit_test::WhatOf;
 
 namespace
 {
-  constexpr std::string_view NEEDED{ "the count fits the buffer" };
-  constexpr std::string_view PROMISED{ "the cursor is at the end" };
-  constexpr std::string_view UNWRITTEN{ "the big-endian road" };
-
-  using Ignoring    = Contracts<ContractMode::IGNORE>;
+  using Ignoring    = Contracts<ContractMode::OFF>;
   using Complaining = Contracts<ContractMode::COMPLAIN>;
   using Stopping    = Contracts<ContractMode::STOP>;
   using Throwing    = Contracts<ContractMode::THROW>;
-
-  auto FailureLine(std::string_view kind, std::source_location where,
-                   std::string_view text) -> std::string
-  {
-    return std::format("{}: {}:{} {}: {}", kind, where.file_name(),
-                       where.line(), where.function_name(), text);
-  }
-
-  // The line is said before it is thrown, so the road it is said on is
-  // swallowed here and read back by the native test instead.
-  auto WhatOf(auto&& broken) -> std::string
-  {
-    testing::internal::CaptureStderr();
-    auto said{ std::string{ } };
-    try { broken(); }
-    catch (platform::ContractFailure const& failure) { said = failure.what(); }
-    static_cast<void>(testing::internal::GetCapturedStderr());
-    return said;
-  }
 }
 
 static_assert((Ignoring::Expects(false, NEEDED), true));

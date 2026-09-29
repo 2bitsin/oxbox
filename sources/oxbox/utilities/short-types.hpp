@@ -22,9 +22,9 @@ namespace oxbox::utilities
   using Bytes         = std::span<std::byte const>;
   using WritableBytes = std::span<std::byte>;
 
-  inline constexpr auto U08MAX = std::numeric_limits<U08>::max();
-  inline constexpr auto U16MAX = std::numeric_limits<U16>::max();
-  inline constexpr auto U32MAX = std::numeric_limits<U32>::max();
-  inline constexpr auto U64MAX = std::numeric_limits<U64>::max();  
+  inline constexpr auto U08MAX = (std::numeric_limits<U08>::max)();
+  inline constexpr auto U16MAX = (std::numeric_limits<U16>::max)();
+  inline constexpr auto U32MAX = (std::numeric_limits<U32>::max)();
+  inline constexpr auto U64MAX = (std::numeric_limits<U64>::max)();  
 
 }

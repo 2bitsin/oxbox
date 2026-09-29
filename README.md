@@ -170,7 +170,7 @@ too, because where a failed contract is said is the host's business.
 
 | Header | Holds |
 |--------|-------|
-| `contract.hpp` | `ContractMode` and `Contracts<MODE>` — `Expects`/`Ensures`, `Unreachable(value)`, `NotImplemented`, the one line a failure says, and `ContractFailure`, that line as an exception |
+| `contract.hpp` | `ContractMode` and `Contracts<MODE>` — `Expects`/`Ensures`, `Unreachable(value)`, `NotImplemented`, the one line a failure says, and `ContractFailure`, that line as an exception; `OXBOX_EXPECTS`/`OXBOX_ENSURES`, the macros whose condition an `OFF` build never compiles |
 | `contract-report.hpp` | where that line goes, split by tag: stderr natively, the browser console in the wasm lane. Not re-exported |
 | `memory.hpp` | `AllocatePages`/`ReleasePages`, and `PageAlignedArray<T>` — an owning page-aligned array of a trivial type that copies as a real allocation |
 | `native-file.hpp` | the OS handle and its verbs. Not re-exported, which is what keeps it private to the module |
@@ -198,7 +198,7 @@ switch (kind)
 `ContractMode` has four values, and each kind answers a broken contract
 its own way:
 
-| | `STOP` | `THROW` | `COMPLAIN` | `IGNORE` |
+| | `STOP` | `THROW` | `COMPLAIN` | `OFF` |
 |--------|--------|---------|------------|----------|
 | `Expects` / `Ensures` | says the line, `std::abort()` | says the line, throws | says the line, returns | nothing |
 | `Unreachable(value)` | says the line, `std::abort()` | says the line, throws | says the line, `std::abort()` | `std::unreachable()` |
@@ -243,7 +243,7 @@ consteval auto ContractModeNamed(std::string_view name)
   {
     case "stop"_hash:     return ContractMode::STOP;
     case "complain"_hash: return ContractMode::COMPLAIN;
-    case "off"_hash:      return ContractMode::IGNORE;
+    case "off"_hash:      return ContractMode::OFF;
     default:              return std::nullopt;
   }
 }
@@ -252,6 +252,62 @@ inline constexpr auto CHOSEN{ ContractModeNamed(MYPROJECT_CONTRACTS) };
 static_assert(CHOSEN.has_value(), "contracts is stop, complain or off");
 inline constexpr auto MYPROJECT_CONTRACT_MODE{ *CHOSEN };
 ```
+
+**`OFF` compiles the condition out** through `OXBOX_EXPECTS(condition,
+text)` and `OXBOX_ENSURES(condition, text)`, function-like macros over the
+same `Contracts<MODE>`. In an ignore build the expansion carries no trace
+of the condition; in every other mode the condition is evaluated once and
+handed to the function, whose defaulted `std::source_location` is the call
+site's:
+
+| `OXBOX_CONTRACT_MODE` | `OXBOX_EXPECTS(condition, "text")` expands to |
+|---|---|
+| `STOP`, `THROW`, `COMPLAIN` | `(Agreed<OXBOX_CONTRACT_MODE, false>::Expects(condition, "text"))` |
+| `OFF` | `static_cast<void>(Agreed<OXBOX_CONTRACT_MODE, true>::IGNORED)` |
+
+The macros read the mode from two tokens a consumer defines:
+
+- `OXBOX_CONTRACT_MODE` is a `ContractMode` constant expression, the
+  `consteval` mapping above or its constant, read where a macro is used.
+  There is no default: a macro used without it does not compile, and the
+  diagnostic names the token. A translation unit that only calls
+  `Contracts<MODE>` needs neither token.
+- `OXBOX_CONTRACTS_IGNORE` is defined, before `contract.hpp` is first
+  included, exactly when that mode is `OFF`. `Agreed<MODE,
+  PREPROCESSOR_IGNORES>` is `Contracts<MODE>` with a `static_assert` that
+  the two agree, so a build that told only one of them is refused at its
+  first contract.
+
+Two translation units built under different modes, ignore against checked
+or THROW against STOP alike, may share an inline function or template that
+uses a macro only if both define the same two tokens: otherwise its body is
+two different token sequences, ill-formed with no diagnostic required
+([basic.def.odr]).
+
+With the condition gone from an ignore build, a parameter or local whose
+only use was a contract is unused there (`-Wunused-parameter`,
+`-Wunused-variable`), and the consumer marks it `[[maybe_unused]]` or
+gives it a use the build keeps. A condition is `bool` and what converts to
+it, or a `std::optional`, held when it has a value, through the overload
+of `Expects`/`Ensures` that takes one. A template comma inside the
+condition is one argument, and the text is the last.
+`Unreachable(value)` and `NotImplemented(text)` stay functions: they take no
+condition. A consumer keeps its own spellings by defining them over the
+macros, after the last function of its own wrapper:
+
+```cpp
+#define OXBOX_CONTRACT_MODE ::myproject::MYPROJECT_CONTRACT_MODE
+#include <oxbox/platform/contract.hpp>
+...
+#define Expects(...) OXBOX_EXPECTS(__VA_ARGS__)
+#define Ensures(...) OXBOX_ENSURES(__VA_ARGS__)
+```
+
+A function-like macro named `Expects` rewrites every later `Expects(`
+token in the translation unit, including a qualified spelling such as
+`Checked::Expects(...)`, which no longer compiles after the define, so the
+wrapper's own `Expects` and `Ensures` functions go, and the define comes
+after every function of the wrapper that still calls one.
 
 Four facts a caller needs:
 
@@ -295,7 +351,11 @@ projects each had a drifting copy of.
 |--------|-------|
 | `short-types.hpp` | `U08`…`U64`, `S08`…`S64`, `F32`/`F64`, `Bytes`/`WritableBytes`, and the `*MAX` constants |
 | `span.hpp` | `SafeSubspan`, `Advance`, `SpanCast`, `AsBytes`/`AsWritableBytes`, `BytesEqual` |
-| `ranges.hpp` | `get<N>` — `std::get<N>` as a callable, for use as a range projection |
+| `ranges.hpp` | the entry point that includes the three below, and `get<N>` — `std::get<N>` as a callable, for use as a range projection |
+| `chunk.hpp` | `Chunk(range, n)` and `range \| Chunk(n)`, `std::views::chunk` over a sized random-access range; `ChunkSizeZero` for `n == 0` |
+| `enumerate.hpp` | `Enumerate(range)` and `range \| Enumerate`, `std::views::enumerate`: `(index, element&)` tuples |
+| `present.hpp` | `Present(range)` and `range \| Present`, the contained values of a range of optionals' engaged elements, in order |
+| `function.hpp` | `MoveOnlyFunction<R(Args...) cv ref noexcept>`, `std::move_only_function`; the fallback keeps its target on the heap |
 | `visitor.hpp` | `Visitor`, the overload-set aggregate for `std::visit` |
 | `fixed-string.hpp` | `FixedString`, a string usable as a template argument |
 | `errors.hpp` | the project's exception family |
@@ -422,10 +482,25 @@ renamed `--no-upload` to that on build, test, run and bench; a bare
 `--no-upload` is refused with the new name). Only the publish lanes may
 upload.
 
-CTest discovers 1115 cases, including the short-option compile refusals.
+CTest discovers 1136 cases, including the short-option compile refusals.
 Runtime unit tests travel with the modules, as `.cpp` files under each
 module's `unit.test/`; `test_package/smoke.cpp` proves the shipped package
 resolves, compiles, links and runs a real roundtrip.
+
+### `tools/lint`
+
+`tools/lint/windows_hygiene.py` refuses, in every header outside a
+`*.win32.*` one, a name a bare `<windows.h>` defines as a macro: an object
+macro anywhere outside comments, literals and conditional directives, a
+function-like one (`min`, `max`) where a `(` follows it. That covers every
+enumerator of every enum against the next SDK macro. The names are data,
+`tools/lint/windows-macros.txt`, what `cl /EP /PD` sees `<windows.h>` add to
+the compiler's and the standard library's own; `windows_macros.py`
+regenerates it in the image `OXBOX_MSVC_IMAGE` names. Each module's
+`unit.test/headers.win32.cpp` includes `<windows.h>` and then the module's
+`headers.cpp`, so on Windows every public header compiles after it (http
+puts `<winsock2.h>` first, as asio requires); the suite checks each module
+has one. buildutil runs the suite with the others (`tools/*/pytest.ini`).
 
 ### `tools/negative-compile.sh`
 
@@ -552,6 +627,60 @@ What a consumer has to know about how this library behaves:
   a `.linux` tag on the cases that need `/dev/full` and `RLIMIT_AS`.
 
 ## Release notes
+
+**0.36.1 — the macro list names its compiler image by digest alone.**
+`tools/lint/windows-macros.txt`, new in 0.36.0, recorded the msvc-wine image
+by a registry path; it now records the image digest only, and
+`windows_macros.py` writes it that way. Nothing else changed.
+
+**0.36.0 — every header compiles after `<windows.h>`; `IGNORE` is `OFF`.**
+A consumer that includes `<windows.h>` first, with neither `NOMINMAX` nor
+`WIN32_LEAN_AND_MEAN`, now compiles every public header of `cli`,
+`platform`, `serialization` and `utilities`; `http` additionally needs
+`<winsock2.h>` before `<windows.h>` (or `WIN32_LEAN_AND_MEAN`), which is
+asio's requirement: otherwise `<windows.h>` brings `winsock.h` and asio
+stops with C1189. Every `min` and `max` call in a header is written
+`(std::min)(...)` or `(std::numeric_limits<T>::max)()`. Breaking:
+`ContractMode::IGNORE`, which winbase's `IGNORE` macro turned into `0`, is
+`ContractMode::OFF`, with no alias; `COMPLAIN`, `STOP` and `THROW` are
+unchanged. A consumer's change is that one spelling at each use:
+`ContractMode::IGNORE` becomes `ContractMode::OFF`, and a `using enum`
+mapping such as `std::array{ STOP, COMPLAIN, IGNORE }` becomes
+`std::array{ STOP, COMPLAIN, OFF }`. A consumer's build words and
+`OXBOX_CONTRACTS_IGNORE` are unchanged. Also gone: `cli::UNBOUNDED_INTAKE`,
+the same value as `cli::UNBOUNDED`, which answers for both.
+
+**0.35.0 — four standard operations on every library.** `MoveOnlyFunction`,
+`Chunk`, `Enumerate` and `Present` are `std::move_only_function`,
+`std::views::chunk`, `std::views::enumerate` and `views::join` over optionals
+where `<version>` says the library has them, and a fallback with the same
+results where it does not (libc++ 20, the macOS SDK's). `Chunk` accepts only
+sized random-access ranges and throws `ChunkSizeZero` for a size of zero on
+every library; `Present` accepts only ranges of `std::optional`. Where a
+fallback differs:
+
+- `MoveOnlyFunction` allocates every target, so it may throw
+  `std::bad_alloc` even for a function pointer or a `reference_wrapper`.
+- `Chunk`'s difference type is iota's over `std::size_t`, not the range's.
+- `Enumerate` is common only over a random-access range.
+- `Present` evaluates a prvalue element twice and yields its value where
+  `join` yields a reference into its cache, and it cannot be iterated
+  through a const view.
+
+The choice is made per translation unit from the feature macros, so a
+program builds every unit with one standard, as buildutil does. Additive.
+
+**0.34.0 — `IGNORE` compiles the condition out.** `OXBOX_EXPECTS` and
+`OXBOX_ENSURES` are function-like macros over `Contracts<MODE>`: in an
+ignore build their expansion holds no trace of the condition, in every
+other mode the condition runs once and reaches the function with the call
+site. The mode is `OXBOX_CONTRACT_MODE`, a `ContractMode` expression a
+consumer defines before the include, with `OXBOX_CONTRACTS_IGNORE` defined
+exactly when it is `IGNORE`; a build that tells only one of them is refused,
+as is a macro used without the token.
+`Expects` and `Ensures` also take a `std::optional`, held when it has a
+value. Additive: every existing `Contracts<MODE>` call resolves as before,
+and an includer that uses no macro needs no token.
 
 **0.33.1 — documentation.** A known-issues paragraph no longer names an
 internal image; no code change.

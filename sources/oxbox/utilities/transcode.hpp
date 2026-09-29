@@ -300,7 +300,7 @@ namespace oxbox::utilities::detail::transcode
     auto _ConsumeCarry(Bytes& chunk, _Sink&& sink) -> DecodeReport
     {
       if (_carry_length == 0u) { return { }; }
-      auto const head{ std::min(chunk.size_bytes(), LONGEST_SEQUENCE_BYTES) };
+      auto const head{ (std::min)(chunk.size_bytes(), LONGEST_SEQUENCE_BYTES) };
       auto const carried{ _CarriedBytes() };
       auto joined{ std::array<std::byte, 2u * LONGEST_SEQUENCE_BYTES>{ } };
       auto const seam   { stdr::copy(carried, joined.begin()).out };

@@ -59,9 +59,9 @@ namespace oxbox::cli::detail::naming
       current[0] = left;
       for (std::size_t right{ 1u }; right <= rhs.size(); ++right) {
         auto const same{ NameChar(lhs[left - 1u]) == NameChar(rhs[right - 1u]) };
-        current[right] = std::min({ previous[right] + 1u,
-                                    current[right - 1u] + 1u,
-                                    previous[right - 1u] + (same ? 0u : 1u) });
+        current[right] = (std::min)({ previous[right] + 1u,
+                                      current[right - 1u] + 1u,
+                                      previous[right - 1u] + (same ? 0u : 1u) });
       }
       std::swap(previous, current);
     }

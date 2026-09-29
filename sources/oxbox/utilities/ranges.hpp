@@ -1,4 +1,9 @@
 #pragma once
+// The range operations: Chunk, Enumerate and Present, and get<N> as a callable.
+
+#include "oxbox/utilities/chunk.hpp"
+#include "oxbox/utilities/enumerate.hpp"
+#include "oxbox/utilities/present.hpp"
 
 #include <cstddef>
 #include <tuple>

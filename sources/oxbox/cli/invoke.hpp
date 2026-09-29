@@ -19,7 +19,6 @@
 #include <concepts>
 #include <cstddef>
 #include <iterator>
-#include <limits>
 #include <optional>
 #include <ranges>
 #include <string_view>
@@ -101,15 +100,12 @@ namespace oxbox::cli::detail::invoke
     requires { typename std::remove_cvref_t<Type>::value_type; } &&
     OptionalParameter<typename std::remove_cvref_t<Type>::value_type>;
 
-  inline constexpr std::size_t UNBOUNDED_INTAKE{
-    std::numeric_limits<std::size_t>::max() };
-
   template <typename Param>
   consteval auto MaxIntake() -> std::size_t
   {
     using Bare = std::remove_cvref_t<Param>;
     if constexpr (TailParameter<Bare> || ContainerParameter<Bare>)
-      return UNBOUNDED_INTAKE;
+      return member_shape::UNBOUNDED;
     else if constexpr (OptionalParameter<Bare>)
       return ConsumedBy<typename OptionalElement<Bare>::type>();
     else if constexpr (ShapedParameter<Bare>)
@@ -494,5 +490,4 @@ namespace oxbox::cli
   using detail::invoke::Signature;
   using detail::invoke::SignatureOf;
   using detail::invoke::TailParameter;
-  using detail::invoke::UNBOUNDED_INTAKE;
 }

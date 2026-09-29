@@ -41,6 +41,9 @@ CASES=(
   "short-options.duplicate.output"$FS"$HERE/negative-compile/short-options.duplicate.cpp"$FS"two members claim the same short spelling"$FS"output"$FS"$HERE/negative-compile/short-options.distinct.cpp"
   "short-options.bad-tag.verbose"$FS"$HERE/negative-compile/short-options.bad-tag.cpp"$FS"a short option tag must be a dash and exactly one character"$FS"verbose"$FS"$HERE/negative-compile/short-options.distinct.cpp"
   "short-options.bare-dash.verbose"$FS"$HERE/negative-compile/short-options.bare-dash.cpp"$FS"a short option tag must be a dash and exactly one character"$FS"verbose"$FS"$HERE/negative-compile/short-options.distinct.cpp"
+  "contract-macro.mode-without-flag"$FS"$HERE/negative-compile/contract-macro.mode-without-flag.cpp"$FS"OXBOX_CONTRACTS_IGNORE is defined exactly when OXBOX_CONTRACT_MODE is ContractMode::OFF"$FS""$FS"$HERE/negative-compile/contract-macro.accepts.cpp"
+  "contract-macro.flag-without-mode"$FS"$HERE/negative-compile/contract-macro.flag-without-mode.cpp"$FS"OXBOX_CONTRACTS_IGNORE is defined exactly when OXBOX_CONTRACT_MODE is ContractMode::OFF"$FS""$FS"$HERE/negative-compile/contract-macro.accepts.cpp"
+  "contract-macro.no-mode"$FS"$HERE/negative-compile/contract-macro.no-mode.cpp"$FS"declared"$FS"OXBOX_CONTRACT_MODE"$FS"$HERE/negative-compile/contract-macro.accepts.cpp"
 )
 
 WITH_MSVC=1

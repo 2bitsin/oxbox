@@ -14,7 +14,7 @@
 namespace oxbox::cli::detail::member_shape
 {
   inline constexpr std::size_t UNBOUNDED{
-    std::numeric_limits<std::size_t>::max() };
+    (std::numeric_limits<std::size_t>::max)() };
 
   // How many values the member holds, from its type alone.
   template <typename Type>

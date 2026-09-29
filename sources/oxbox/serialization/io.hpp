@@ -72,7 +72,7 @@ namespace oxbox::serialization
   public:
     explicit ByteSpanSource(oxbox::utilities::Bytes bytes) : _rest{ bytes } {}
     auto Read(std::span<std::byte>& buffer) -> std::span<std::byte const> {
-      auto const count{ std::min(buffer.size(), _rest.size()) };
+      auto const count{ (std::min)(buffer.size(), _rest.size()) };
       if (count == 0) return {};
       std::ranges::copy(_rest.first(count), buffer.begin());
       auto const filled{ std::span<std::byte const>{ buffer }.first(count) };
@@ -153,7 +153,7 @@ namespace oxbox::serialization
         if (_carry_at < _carry_len) {
           auto const pending{ std::as_bytes(std::span{ _carry })
                                 .subspan(_carry_at, _carry_len - _carry_at) };
-          auto const take{ std::min(pending.size(), out.size() - count) };
+          auto const take{ (std::min)(pending.size(), out.size() - count) };
           std::ranges::copy(pending.first(take), out.subspan(count).begin());
           count     += take;
           _carry_at += static_cast<std::uint8_t>(take);

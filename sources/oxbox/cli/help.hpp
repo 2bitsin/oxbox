@@ -8,6 +8,7 @@
 #include "oxbox/cli/convert.hpp"
 #include "oxbox/cli/invoke.hpp"
 #include "oxbox/cli/member-role.hpp"
+#include "oxbox/cli/member-shape.hpp"
 #include "oxbox/cli/name-lookup.hpp"
 #include "oxbox/cli/naming.hpp"
 #include "oxbox/cli/parse.hpp"
@@ -254,16 +255,16 @@ namespace oxbox::cli::detail::help
     scheme::ForEachItem<CliApp>(add_member);
 
     if constexpr (::reflect::interface_reflected<CliApp>) {
-      constexpr auto INTERFACE{ ::reflect::interface_scheme_of<CliApp>() };
+      constexpr auto METHODS{ ::reflect::interface_scheme_of<CliApp>() };
       auto add_method = [&]<std::size_t INDEX>() {
-        using Item = decltype(::reflect::scheme_item<INDEX>(INTERFACE));
+        using Item = decltype(::reflect::scheme_item<INDEX>(METHODS));
         if constexpr (member_role::IsSubcommandMethod<Item>())
           rows.push_back({ naming::Spell(naming::ExternalName<Item>()),
                            std::string{ Item::COMMENT }, { } });
       };
       [&]<std::size_t ... INDEX>(std::index_sequence<INDEX...>) {
         (add_method.template operator()<INDEX>(), ...);
-      }(std::make_index_sequence<::reflect::scheme_size(INTERFACE)>{ });
+      }(std::make_index_sequence<::reflect::scheme_size(METHODS)>{ });
     }
     return rows;
   }
@@ -298,7 +299,7 @@ namespace oxbox::cli::detail::help
       auto const spelled{ naming::Spell(invoke::ParamNameOf<INDEX, Sig>()) };
       // Read off the intake range, so the screen cannot disagree with what
       // binding will do.
-      if constexpr (invoke::MaxIntake<Param>() == invoke::UNBOUNDED_INTAKE)
+      if constexpr (invoke::MaxIntake<Param>() == member_shape::UNBOUNDED)
         out += std::format(" [{}...]", spelled);
       else if constexpr (invoke::MinIntake<Param>() == 0u)
         out += std::format(" [{}]", spelled);
@@ -364,7 +365,7 @@ namespace oxbox::cli::detail::help
     std::size_t widest{ 0u };
     for (auto const& section : sections)
       for (auto const& row : section.rows)
-        widest = std::max(widest, row.name.size());
+        widest = (std::max)(widest, row.name.size());
 
     auto const indent{ NAME_COLUMN + widest + GAP };
     auto const width { indent < LINE_WIDTH ? LINE_WIDTH - indent : 40u };

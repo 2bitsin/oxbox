@@ -11,7 +11,7 @@ case "$lane" in
     image=${OXBOX_MSVC_IMAGE:?set OXBOX_MSVC_IMAGE to the msvc-wine image}
     # _CL_ appends where CL would replace: /Z7 keeps debug info in the .obj so
     # mspdbsrv, which hangs under wine, never spawns. /root/.wine is unwritable.
-    env_args=(-e "_CL_=/Z7" -e "WINEPREFIX=/w/_crossbuild-$lane/.wine")
+    env_args=(-e "_CL_=/Z7" -e "WINEPREFIX=/work/_crossbuild-$lane/.wine")
     # The prefix is built once and kept; `wineserver -p` exits 2 with one up.
     setup='mkdir -p "$WINEPREFIX"
            wineserver -p
@@ -22,7 +22,7 @@ case "$lane" in
   macos)
     image=${OXBOX_OSXCROSS_IMAGE:?set OXBOX_OSXCROSS_IMAGE to the osxcross image}
     env_args=()
-    setup='. /w/tools/osxcross-env.sh'
+    setup='. /work/tools/osxcross-env.sh'
     cmd=(buildutil --jobs 7 build --release --no-tests --compiler osxcross --skip-dependency-upload-so-everyone-rebuilds-from-source)
     ;;
   *)
@@ -36,7 +36,7 @@ docker=${DOCKER:-docker}          # DOCKER=podman, or a remote docker
 home=$repo/_crossbuild-$lane   # wine refuses a prefix under a dir it does not own
 mkdir -p "$home"
 
-mounts=(-v "$repo:/w")
+mounts=(-v "$repo:/work")
 if [ -n "${BUILDUTIL_WHEEL:-}" ]; then
   wheel=$(cd -- "$(dirname -- "$BUILDUTIL_WHEEL")" && pwd)/$(basename -- "$BUILDUTIL_WHEEL")
   [ -d "$wheel" ] || wheel=$(dirname -- "$wheel")   # pip needs the real filename
@@ -54,10 +54,10 @@ fi
 # every -e. --network host: the conan remote may need the host's namespace.
 exec "$docker" run --rm -i \
   --user "$(id -u):$(id -g)" \
-  -e "HOME=/w/_crossbuild-$lane" \
+  -e "HOME=/work/_crossbuild-$lane" \
   "${mounts[@]}" \
   -e "BUILDUTIL_VENV_DIR=/tmp/_pyvenv" \
-  -e "CONAN_HOME=/w/_conanhome-$lane" \
+  -e "CONAN_HOME=/work/_conanhome-$lane" \
   -e CONAN_REMOTE_URL -e CONAN_REMOTE_NAME \
   -e CONAN_REMOTE_USER -e CONAN_REMOTE_PASS \
   ${env_args[@]+"${env_args[@]}"} \
@@ -68,5 +68,5 @@ exec "$docker" run --rm -i \
     python3 -m venv /tmp/pkgvenv
     export PATH="/tmp/pkgvenv/bin:$PATH"
     '"$install"'
-    cd /w
+    cd /work
     exec "$@"' -- "${cmd[@]}" "$@"

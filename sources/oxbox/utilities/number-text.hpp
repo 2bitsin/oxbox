@@ -152,7 +152,7 @@ namespace oxbox::utilities::detail::number_text
       magnitude = static_cast<_Number>(magnitude / base);
     }
     while (magnitude != _Number{ 0 });
-    out.resize(std::max(out.size(), width), '0');
+    out.resize((std::max)(out.size(), width), '0');
     std::ranges::reverse(out);
     return out;
   }

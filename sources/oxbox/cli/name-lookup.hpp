@@ -72,7 +72,7 @@ namespace oxbox::cli::detail::name_lookup
   }
 
   inline constexpr std::size_t NO_DISPATCH{
-    std::numeric_limits<std::size_t>::max() };
+    (std::numeric_limits<std::size_t>::max)() };
 
   // The index is into the flattened list, which the dispatch site folds too.
   template <CommandDerived Owner>

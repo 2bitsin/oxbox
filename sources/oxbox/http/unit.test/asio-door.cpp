@@ -44,7 +44,7 @@ namespace
   auto MentionsBoostInclude(std::string_view line) -> bool
   {
     auto const skip{ [&line](std::string_view chars) {
-      line.remove_prefix(std::min(line.find_first_not_of(chars), line.size())); } };
+      line.remove_prefix((std::min)(line.find_first_not_of(chars), line.size())); } };
     skip(" \t");
     if (!line.starts_with('#')) { return false; }
     line.remove_prefix(1);

@@ -7,6 +7,7 @@
 
 #include <cstdlib>
 #include <format>
+#include <optional>
 #include <source_location>
 #include <stdexcept>
 #include <string>
@@ -18,7 +19,7 @@ namespace oxbox::platform::detail::contract
 {
   using namespace contract_report;
 
-  enum class ContractMode { IGNORE, COMPLAIN, STOP, THROW };
+  enum class ContractMode { OFF, COMPLAIN, STOP, THROW };
 
   inline constexpr std::string_view PRECONDITION{ "precondition" };
   inline constexpr std::string_view POSTCONDITION{ "postcondition" };
@@ -104,20 +105,41 @@ namespace oxbox::platform::detail::contract
   template <ContractMode MODE>
   struct Contracts
   {
-    static constexpr auto Expects(bool held, std::string_view text,
+    static constexpr auto Expects(bool held,
+        std::string_view     text,
         std::source_location where = std::source_location::current())
       -> void
     {
-      if constexpr (MODE != ContractMode::IGNORE)
+      if constexpr (MODE != ContractMode::OFF)
         if (!held) Break<MODE>(PRECONDITION, text, where);
     }
 
-    static constexpr auto Ensures(bool held, std::string_view text,
+    // An optional is held when it has a value.
+    template <typename _Type>
+    static constexpr auto Expects(std::optional<_Type> const& held,
+        std::string_view     text,
         std::source_location where = std::source_location::current())
       -> void
     {
-      if constexpr (MODE != ContractMode::IGNORE)
+      Expects(held.has_value(), text, where);
+    }
+
+    static constexpr auto Ensures(bool held,
+        std::string_view     text,
+        std::source_location where = std::source_location::current())
+      -> void
+    {
+      if constexpr (MODE != ContractMode::OFF)
         if (!held) Break<MODE>(POSTCONDITION, text, where);
+    }
+
+    template <typename _Type>
+    static constexpr auto Ensures(std::optional<_Type> const& held,
+        std::string_view     text,
+        std::source_location where = std::source_location::current())
+      -> void
+    {
+      Ensures(held.has_value(), text, where);
     }
 
     // A closed switch's default has no continuation, so COMPLAIN stops too.
@@ -126,7 +148,7 @@ namespace oxbox::platform::detail::contract
         std::source_location where = std::source_location::current())
       -> void
     {
-      if      constexpr (MODE == ContractMode::IGNORE) std::unreachable();
+      if      constexpr (MODE == ContractMode::OFF) std::unreachable();
       else if constexpr (MODE == ContractMode::THROW)
         Throw(UNREACHABLE, Describe(value), where);
       else Fail(UNREACHABLE, Describe(value), where);
@@ -136,11 +158,45 @@ namespace oxbox::platform::detail::contract
         std::source_location where = std::source_location::current())
       -> void
     {
-      if constexpr (MODE != ContractMode::IGNORE)
+      if constexpr (MODE != ContractMode::OFF)
         Break<MODE>(NOT_IMPLEMENTED, text, where);
     }
   };
+
+  // Contracts<MODE> refused unless the preprocessor was told the same mode.
+  template <ContractMode MODE, bool PREPROCESSOR_IGNORES>
+  struct Agreed : Contracts<MODE>
+  {
+    static_assert((MODE == ContractMode::OFF) == PREPROCESSOR_IGNORES,
+                  "OXBOX_CONTRACTS_IGNORE is defined exactly when "
+                  "OXBOX_CONTRACT_MODE is ContractMode::OFF");
+
+    static constexpr bool IGNORED{ MODE == ContractMode::OFF };
+  };
 }
+
+// OXBOX_CONTRACT_MODE, a ContractMode constant expression, is read at each
+// use, OXBOX_CONTRACTS_IGNORE at this include; the parentheses keep the
+// template comma whole inside another macro's argument.
+#ifdef OXBOX_CONTRACTS_IGNORE
+  // NOLINTNEXTLINE(cppcoreguidelines-macro-usage): the condition is left out
+  #define OXBOX_EXPECTS(...) \
+    static_cast<void>(::oxbox::platform::detail::contract:: \
+                        Agreed<OXBOX_CONTRACT_MODE, true>::IGNORED)
+  // NOLINTNEXTLINE(cppcoreguidelines-macro-usage): the condition is left out
+  #define OXBOX_ENSURES(...) \
+    static_cast<void>(::oxbox::platform::detail::contract:: \
+                        Agreed<OXBOX_CONTRACT_MODE, true>::IGNORED)
+#else
+  // NOLINTNEXTLINE(cppcoreguidelines-macro-usage): one spelling in every mode
+  #define OXBOX_EXPECTS(...) \
+    (::oxbox::platform::detail::contract:: \
+       Agreed<OXBOX_CONTRACT_MODE, false>::Expects(__VA_ARGS__))
+  // NOLINTNEXTLINE(cppcoreguidelines-macro-usage): as OXBOX_EXPECTS
+  #define OXBOX_ENSURES(...) \
+    (::oxbox::platform::detail::contract:: \
+       Agreed<OXBOX_CONTRACT_MODE, false>::Ensures(__VA_ARGS__))
+#endif
 
 namespace oxbox::platform
 {

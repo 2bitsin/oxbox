@@ -1,4 +1,5 @@
 Init_submodule()
+Add_negative_compile_tests(contract-macro)
 # Diagnostics spell a path with PathToString: std::filesystem::path::string()
 # throws on Windows for a name the narrow encoding cannot hold.
 Link_dependencies(

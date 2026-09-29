@@ -160,7 +160,7 @@ namespace oxbox::utilities::detail::bits
   {
     if (offset >= BITS_IN<_T>)
       return _T{ 0 };
-    auto const fits{ std::min(length, BITS_IN<_T> - offset) };
+    auto const fits{ (std::min)(length, BITS_IN<_T> - offset) };
     return static_cast<_T>((value >> offset) & LowBits<_T>(fits));
   }
 
@@ -172,7 +172,7 @@ namespace oxbox::utilities::detail::bits
   {
     if (offset >= BITS_IN<_T>)
       return value;
-    auto const fits{ std::min(length, BITS_IN<_T> - offset) };
+    auto const fits{ (std::min)(length, BITS_IN<_T> - offset) };
     auto const mask{ static_cast<_T>(LowBits<_T>(fits) << offset) };
     return static_cast<_T>((value & static_cast<_T>(~mask))
                          | (static_cast<_T>(field << offset) & mask));
