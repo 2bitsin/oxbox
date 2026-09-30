@@ -628,6 +628,14 @@ What a consumer has to know about how this library behaves:
 
 ## Release notes
 
+**0.36.2 — the package carries its licence.** The conan package now ships
+`licenses/LICENSE`, where a consumer that redistributes oxbox's binaries
+finds the notice it must ship. The recipe is regenerated on buildutil
+0.99.0, whose `package()` copies the root's licence files there and whose
+Require() parser travels inside `conanfile.py`; the recipe text and its
+`exports_sources` change, so 0.36.2 is a new recipe revision. No header or
+library changed.
+
 **0.36.1 — the macro list names its compiler image by digest alone.**
 `tools/lint/windows-macros.txt`, new in 0.36.0, recorded the msvc-wine image
 by a registry path; it now records the image digest only, and
