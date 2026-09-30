@@ -23,7 +23,16 @@
 #include "oxbox/serialization/hooks.hpp"
 #include "oxbox/serialization/reflected-scheme.hpp"
 #include "oxbox/serialization/scheme.hpp"
+#include "oxbox/utilities/map-like.hpp"
 #include "oxbox/utilities/path.hpp"
+
+namespace oxbox::serialization::detail::read_walker
+{
+  // a map's value_type holds a const key, so its entry is read into a plain pair
+  template <typename T>            struct ElementSlotT    { using type = typename T::value_type; };
+  template <utilities::MapLike T>  struct ElementSlotT<T> { using type = std::pair<typename T::key_type, typename T::mapped_type>; };
+  template <typename T>            using  ElementSlotOf = typename ElementSlotT<T>::type;
+}
 
 namespace oxbox::serialization::detail
 {
@@ -106,29 +115,10 @@ namespace oxbox::serialization::detail
       out = std::move(tmp);
     }
 
-    // a short wire array is tolerated exactly where a scheme tolerates an
-    // absent field: an optional or pointer element past the end stays empty
-    template <typename... Ts>
-    auto Visit(std::tuple<Ts...>& out) -> void {
+    template <TupleLike T>
+    auto Visit(T& out) -> void {
       _r.EnterArray();
-      std::size_t index{ 0 };
-      auto const element = [&](auto& el) {
-        using E = std::remove_cvref_t<decltype(el)>;
-        if (!_r.HasNext()) {
-          if constexpr (!requires(E& slot) { slot = std::nullopt; }
-                        && !requires(E& slot) { slot = nullptr; }) {
-            throw oxbox::serialization::ParseError{ std::format(
-              "tuple at {} is missing element {} of {}",
-              _r.Path(), index, sizeof...(Ts)) };
-          }
-        } else {
-          _r.EnterNext();
-          (*this)(el);
-          _r.LeaveNext();
-        }
-        ++index;
-      };
-      std::apply([&](auto&... els) { (element(els), ...); }, out);
+      ReadElements(out, std::make_index_sequence<std::tuple_size_v<T>>{ });
       _r.LeaveArray();
     }
 
@@ -200,14 +190,19 @@ namespace oxbox::serialization::detail
             && (!ByteRange<T>)
             && (!std::same_as<T, std::string>)
             && (!std::same_as<T, std::string_view>)
-            && (!requires { typename T::key_type; typename T::mapped_type; })
+            && (!ObjectKeyed<T>)
             && (!FixedSequence<T>)
     auto Visit(T& out) -> void {
+      using Slot = read_walker::ElementSlotOf<T>;
+      static_assert(std::is_default_constructible_v<Slot>,
+        "every sequence element and every map key and mapped value must be "
+        "default-constructible: the read walker fills a default-constructed "
+        "slot before it inserts it.");
       _r.EnterArray();
       out = T{};
       while (_r.HasNext()) {
         _r.EnterNext();
-        typename T::value_type tmp{};
+        Slot tmp{};
         (*this)(tmp);
         _r.LeaveNext();
         if constexpr (requires { out.push_back(tmp); }) out.push_back(std::move(tmp));
@@ -216,9 +211,7 @@ namespace oxbox::serialization::detail
       _r.LeaveArray();
     }
 
-    template <typename M>
-      requires requires { typename M::key_type; typename M::mapped_type; }
-            && (std::convertible_to<typename M::key_type, std::string_view>)
+    template <StringKeyed M>
     auto Visit(M& out) -> void {
       _r.EnterObject();
       out = M{};
@@ -232,11 +225,7 @@ namespace oxbox::serialization::detail
       _r.LeaveObject();
     }
 
-    template <typename M>
-      requires requires { typename M::key_type; typename M::mapped_type; }
-            && HasEncodeDecode<typename M::key_type>
-            && std::convertible_to<WireTypeOf<typename M::key_type>,
-                                   std::string_view>
+    template <WireStringKeyed M>
     auto Visit(M& out) -> void {
       using K = typename M::key_type;
       _r.EnterObject();
@@ -327,6 +316,33 @@ namespace oxbox::serialization::detail
     }
 
   private:
+    template <typename T, std::size_t... Is>
+    auto ReadElements(T& out, std::index_sequence<Is...>) -> void {
+      (ReadElement<Is>(out), ...);
+    }
+
+    // an optional or pointer element past the end of a short wire array stays empty
+    template <std::size_t I, typename T>
+    auto ReadElement(T& out) -> void {
+      using Access = decltype(concepts::GetAt<I>(out));
+      static_assert(std::is_lvalue_reference_v<Access>
+                    && !std::is_const_v<std::remove_reference_t<Access>>,
+        "reading a tuple-like needs get<I> to return a mutable reference: "
+        "a by-value or const get serialises but cannot be read into.");
+      using Element = std::tuple_element_t<I, T>;
+      if (_r.HasNext()) {
+        _r.EnterNext();
+        (*this)(concepts::GetAt<I>(out));
+        _r.LeaveNext();
+        return;
+      }
+      if constexpr (!requires(Element& slot) { slot = std::nullopt; }
+                    && !requires(Element& slot) { slot = nullptr; })
+        throw oxbox::serialization::ParseError{ std::format(
+          "array at {} is missing element {} of {}",
+          _r.Path(), I, std::tuple_size_v<T>) };
+    }
+
     // A wire integer standing for one octet; a reader that shows values can
     // carry one the octet cannot hold.
     auto Octet() -> std::byte {

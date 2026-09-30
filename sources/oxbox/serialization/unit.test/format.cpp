@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -384,4 +385,74 @@ TYPED_TEST(FormatContract, TupleFieldRoundTrips)
 }
 
 }  // namespace
+
+// scooby-engine's save-state shapes: integer-keyed maps and pairs
+namespace oxbox::serialization::unit_test::detail::format
+{
+  struct DisplayActor
+  {
+    friend constexpr auto reflect_scheme(DisplayActor*) -> auto;
+    std::int32_t x{};
+    std::string  sprite;
+    auto operator==(DisplayActor const&) const -> bool = default;
+  };
+
+  constexpr auto reflect_scheme(DisplayActor*) -> auto
+  {
+    using T = DisplayActor;
+    return ::reflect::class_scheme<
+      ::reflect::member_scheme<"x",      &T::x>,
+      ::reflect::member_scheme<"sprite", &T::sprite>>{ };
+  }
+
+  struct Snapshot
+  {
+    friend constexpr auto reflect_scheme(Snapshot*) -> auto;
+    std::map<std::uint16_t, DisplayActor>               actors;
+    std::map<std::uint16_t, std::uint16_t>              remap;
+    std::vector<std::pair<std::uint32_t, std::size_t>>  spans;
+    std::unordered_map<std::uint16_t, std::string>      names;
+    std::pair<std::string, std::int32_t>                cursor;
+    auto operator==(Snapshot const&) const -> bool = default;
+  };
+
+  constexpr auto reflect_scheme(Snapshot*) -> auto
+  {
+    using T = Snapshot;
+    return ::reflect::class_scheme<
+      ::reflect::member_scheme<"actors", &T::actors>,
+      ::reflect::member_scheme<"remap",  &T::remap>,
+      ::reflect::member_scheme<"spans",  &T::spans>,
+      ::reflect::member_scheme<"names",  &T::names>,
+      ::reflect::member_scheme<"cursor", &T::cursor>>{ };
+  }
+}
+
+using oxbox::serialization::unit_test::detail::format::DisplayActor;
+using oxbox::serialization::unit_test::detail::format::Snapshot;
+
+TYPED_TEST(FormatContract, NonStringKeyedMapsAndPairsRoundTrip)
+{
+  using F = TypeParam;
+  Snapshot const orig{
+    .actors = { { 1, DisplayActor{ .x = -3, .sprite = "cat" } }, { 70, DisplayActor{ .x = 9, .sprite = "dog" } } },
+    .remap  = { { 0, 65535 }, { 7, 8 } },
+    .spans  = { { 4000000000u, 0 }, { 1, 12 } },
+    .names  = { { 2, "two" }, { 3, "three" } },
+    .cursor = { "here", -1 },
+  };
+  auto const wire = oxbox::serialization::Serialize<F>(orig);
+  auto const back = oxbox::serialization::Deserialize<F, Snapshot>(wire);
+  EXPECT_EQ(back, orig);
+}
+
+TYPED_TEST(FormatContract, EmptyNonStringKeyedMapsRoundTrip)
+{
+  using F = TypeParam;
+  Snapshot const orig{ };
+  auto const wire = oxbox::serialization::Serialize<F>(orig);
+  auto const back = oxbox::serialization::Deserialize<F, Snapshot>(wire);
+  EXPECT_EQ(back, orig);
+}
+
 // NOLINTEND(misc-non-private-member-variables-in-classes)

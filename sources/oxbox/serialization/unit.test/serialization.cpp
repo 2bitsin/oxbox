@@ -18,12 +18,14 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 
 
@@ -221,6 +223,147 @@ TEST(Tuple, ShortWireArrayMissingRequiredElementThrows) {
   EXPECT_THROW(
     (oxbox::serialization::FromJson<test_tuple_tail::Pair>(R"({"t":["q"]})")),
     oxbox::serialization::ParseError);
+}
+
+// ── the tuple protocol: what the tuple overload takes and what it leaves alone ──
+namespace oxbox::serialization::unit_test::detail::serialization
+{
+  struct StdPair {
+    friend constexpr auto reflect_scheme(StdPair*) -> auto;
+    std::pair<std::string, std::optional<std::int32_t>> p;
+  };
+
+  constexpr auto reflect_scheme(StdPair*) -> auto
+  {
+    using T = StdPair;
+    return ::reflect::class_scheme<
+      ::reflect::member_scheme<"p", &T::p>>{ };
+  }
+
+  // opts in with tuple_size and tuple_element below; get<I> is the base's
+  struct Row : std::tuple<std::int32_t, std::string> {
+    using std::tuple<std::int32_t, std::string>::tuple;
+  };
+
+  // a user tuple-like: the protocol specialised, get<I> found by ADL
+  struct Extent {
+    std::uint32_t                start{};
+    std::optional<std::uint32_t> length;
+
+    auto operator==(Extent const&) const -> bool = default;
+  };
+
+  template <std::size_t I> constexpr auto get(Extent& e) noexcept       -> auto&       { if constexpr (I == 0) return e.start; else return e.length; }
+  template <std::size_t I> constexpr auto get(Extent const& e) noexcept -> auto const& { if constexpr (I == 0) return e.start; else return e.length; }
+
+  // a user tuple-like through member get<I> alone
+  struct Labelled {
+    std::int32_t count{};
+    std::string  name;
+
+    template <std::size_t I> auto get() const -> auto const& { if constexpr (I == 0) return count; else return name; }
+    template <std::size_t I> auto get()       -> auto&       { if constexpr (I == 0) return count; else return name; }
+
+    auto operator==(Labelled const&) const -> bool = default;
+  };
+
+  // the whole protocol through member get<I>, and a dispatch of their own that wins
+  struct Encoded {
+    std::int32_t value{};
+
+    template <std::size_t I> auto get() const -> std::int32_t const& { return value; }
+    template <std::size_t I> auto get()       -> std::int32_t&       { return value; }
+
+    auto _Encode() const                  -> std::string { return std::to_string(value); }
+    static auto _Decode(std::string wire) -> Encoded     { return Encoded{ std::stoi(wire) }; }
+  };
+
+  struct Schemed {
+    friend constexpr auto reflect_scheme(Schemed*) -> auto;
+    std::int32_t value{};
+
+    template <std::size_t I> auto get() const -> std::int32_t const& { return value; }
+    template <std::size_t I> auto get()       -> std::int32_t&       { return value; }
+  };
+
+  constexpr auto reflect_scheme(Schemed*) -> auto
+  {
+    using T = Schemed;
+    return ::reflect::class_scheme<
+      ::reflect::member_scheme<"value", &T::value>>{ };
+  }
+}
+
+template <> struct std::tuple_size<oxbox::serialization::unit_test::detail::serialization::Row>      : std::integral_constant<std::size_t, 2> {};
+template <> struct std::tuple_size<oxbox::serialization::unit_test::detail::serialization::Extent>   : std::integral_constant<std::size_t, 2> {};
+template <> struct std::tuple_size<oxbox::serialization::unit_test::detail::serialization::Labelled> : std::integral_constant<std::size_t, 2> {};
+template <> struct std::tuple_size<oxbox::serialization::unit_test::detail::serialization::Encoded>  : std::integral_constant<std::size_t, 1> {};
+template <> struct std::tuple_size<oxbox::serialization::unit_test::detail::serialization::Schemed>  : std::integral_constant<std::size_t, 1> {};
+template <> struct std::tuple_element<0, oxbox::serialization::unit_test::detail::serialization::Row>      { using type = std::int32_t; };
+template <> struct std::tuple_element<1, oxbox::serialization::unit_test::detail::serialization::Row>      { using type = std::string; };
+template <> struct std::tuple_element<0, oxbox::serialization::unit_test::detail::serialization::Extent>   { using type = std::uint32_t; };
+template <> struct std::tuple_element<1, oxbox::serialization::unit_test::detail::serialization::Extent>   { using type = std::optional<std::uint32_t>; };
+template <> struct std::tuple_element<0, oxbox::serialization::unit_test::detail::serialization::Labelled> { using type = std::int32_t; };
+template <> struct std::tuple_element<1, oxbox::serialization::unit_test::detail::serialization::Labelled> { using type = std::string; };
+template <> struct std::tuple_element<0, oxbox::serialization::unit_test::detail::serialization::Encoded>  { using type = std::int32_t; };
+template <> struct std::tuple_element<0, oxbox::serialization::unit_test::detail::serialization::Schemed>  { using type = std::int32_t; };
+
+using oxbox::serialization::unit_test::detail::serialization::Encoded;
+using oxbox::serialization::unit_test::detail::serialization::Extent;
+using oxbox::serialization::unit_test::detail::serialization::Labelled;
+using oxbox::serialization::unit_test::detail::serialization::Row;
+using oxbox::serialization::unit_test::detail::serialization::Schemed;
+using oxbox::serialization::unit_test::detail::serialization::StdPair;
+
+static_assert( oxbox::serialization::TupleLike<Row>);
+static_assert( oxbox::serialization::TupleLike<Extent>);
+static_assert( oxbox::serialization::TupleLike<Labelled>);
+static_assert(!oxbox::serialization::TupleLike<Encoded>);
+static_assert(!oxbox::serialization::TupleLike<Schemed>);
+static_assert( oxbox::serialization::detail::concepts::TupleProtocolAt<Encoded>(std::make_index_sequence<1>{ }));
+static_assert( oxbox::serialization::detail::concepts::TupleProtocolAt<Schemed>(std::make_index_sequence<1>{ }));
+
+TEST(Tuple, ShortWireArrayFillsAPairsOptionalSecondWithNullopt) {
+  auto const got = oxbox::serialization::FromJson<StdPair>(R"({"p":["q"]})");
+  EXPECT_EQ(got.p.first, "q");
+  EXPECT_EQ(got.p.second, std::nullopt);
+}
+
+TEST(Tuple, ATupleDerivedTypeThatOptsInIsItsElements) {
+  Row const orig{ 7, "seven" };
+  auto const json{ oxbox::serialization::ToJson(orig) };
+  EXPECT_EQ(json, R"([7,"seven"])");
+  EXPECT_EQ(oxbox::serialization::FromJson<Row>(json), orig);
+}
+
+TEST(Tuple, AUserTupleLikeIsItsElements) {
+  Extent const orig{ .start = 3, .length = 4 };
+  auto const json{ oxbox::serialization::ToJson(orig) };
+  EXPECT_EQ(json, "[3,4]");
+  EXPECT_EQ(oxbox::serialization::FromJson<Extent>(json), orig);
+}
+
+TEST(Tuple, AUserTupleLikeFillsAnOptionalTailFromAShortArray) {
+  EXPECT_EQ(oxbox::serialization::FromJson<Extent>("[3]"), (Extent{ .start = 3, .length = std::nullopt }));
+}
+
+TEST(Tuple, AMemberGetTupleLikeIsItsElements) {
+  Labelled const orig{ .count = 2, .name = "two" };
+  auto const json{ oxbox::serialization::ToJson(orig) };
+  EXPECT_EQ(json, R"([2,"two"])");
+  EXPECT_EQ(oxbox::serialization::FromJson<Labelled>(json), orig);
+}
+
+TEST(Tuple, ATupleLikeWithAnEncodingIsItsEncoding) {
+  auto const json{ oxbox::serialization::ToJson(Encoded{ 42 }) };
+  EXPECT_EQ(json, R"("42")");
+  EXPECT_EQ(oxbox::serialization::FromJson<Encoded>(json).value, 42);
+}
+
+TEST(Tuple, ATupleLikeWithASchemeIsItsScheme) {
+  auto const json{ oxbox::serialization::ToJson(Schemed{ .value = 3 }) };
+  EXPECT_EQ(json, R"({"value":3})");
+  EXPECT_EQ(oxbox::serialization::FromJson<Schemed>(json).value, 3);
 }
 
 // ── encapsulated types: private/protected members ────────────────────

@@ -12,6 +12,7 @@
 #include "oxbox/utilities/function.hpp"
 #include "oxbox/utilities/hash.hpp"
 #include "oxbox/utilities/hex.hpp"
+#include "oxbox/utilities/map-like.hpp"
 #include "oxbox/utilities/number-text.hpp"
 #include "oxbox/utilities/path.hpp"
 #include "oxbox/utilities/present.hpp"

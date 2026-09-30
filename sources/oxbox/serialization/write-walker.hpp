@@ -15,6 +15,7 @@
 #include <string_view>
 #include <tuple>
 #include <type_traits>
+#include <utility>
 #include <variant>
 
 #include "oxbox/serialization/concepts.hpp"
@@ -100,16 +101,14 @@ namespace oxbox::serialization::detail
             && (!ByteRange<T>)
             && (!std::same_as<T, std::string>)
             && (!std::same_as<T, std::string_view>)
-            && (!requires { typename T::key_type; typename T::mapped_type; })
+            && (!ObjectKeyed<T>)
     auto Visit(T const& c) -> void {
       _w.BeginArray();
       for (auto const& el : c) (*this)(el);
       _w.EndArray();
     }
 
-    template <typename M>
-      requires requires { typename M::key_type; typename M::mapped_type; }
-            && (std::convertible_to<typename M::key_type, std::string_view>)
+    template <StringKeyed M>
     auto Visit(M const& m) -> void {
       _w.BeginObject();
       for (auto const& [k, v] : m) {
@@ -119,11 +118,7 @@ namespace oxbox::serialization::detail
       _w.EndObject();
     }
 
-    template <typename M>
-      requires requires { typename M::key_type; typename M::mapped_type; }
-            && HasEncodeDecode<typename M::key_type>
-            && std::convertible_to<WireTypeOf<typename M::key_type>,
-                                   std::string_view>
+    template <WireStringKeyed M>
     auto Visit(M const& m) -> void {
       _w.BeginObject();
       for (auto const& [k, v] : m) {
@@ -184,14 +179,19 @@ namespace oxbox::serialization::detail
       std::visit([this](auto const& alt) { (*this)(alt); }, v);
     }
 
-    template <typename... Ts>
-    auto Visit(std::tuple<Ts...> const& t) -> void {
+    template <TupleLike T>
+    auto Visit(T const& t) -> void {
       _w.BeginArray();
-      std::apply([this](auto const&... els) { ((*this)(els), ...); }, t);
+      VisitElements(t, std::make_index_sequence<std::tuple_size_v<T>>{ });
       _w.EndArray();
     }
 
   private:
+    template <typename T, std::size_t... Is>
+    auto VisitElements(T const& t, std::index_sequence<Is...>) -> void {
+      ((*this)(concepts::GetAt<Is>(t)), ...);
+    }
+
     W& _w;
   };
 }

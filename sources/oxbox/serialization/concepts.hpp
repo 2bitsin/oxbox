@@ -1,5 +1,7 @@
 #pragma once
 
+#include "oxbox/utilities/map-like.hpp"
+
 #include <_buildutil/reflect.hpp>
 
 #include <concepts>
@@ -10,7 +12,9 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace oxbox::serialization
@@ -283,4 +287,69 @@ namespace oxbox::serialization
     typename F::template Writer<detail::ProbeSink>;
     typename F::template Reader<detail::ProbeSource>;
   };
+}
+
+namespace oxbox::serialization::detail::concepts
+{
+  // the tuple protocol structured bindings use: a size, an element type and a
+  // get<I>, member or found by ADL (std::get for the standard types)
+  template <typename T>
+  concept HasTupleSize = requires {
+    { std::tuple_size<T>::value } -> std::convertible_to<std::size_t>;
+  };
+
+  template <typename T, std::size_t I>
+  concept HasGetAt = requires(T& t) { t.template get<I>(); }
+                  || requires(T& t) { get<I>(t); };
+
+  template <std::size_t I, typename T>
+    requires HasGetAt<T, I>
+  constexpr auto GetAt(T& t) -> decltype(auto)
+  {
+    if constexpr (requires { t.template get<I>(); }) return t.template get<I>();
+    else                                              return get<I>(t);
+  }
+
+  template <typename T, std::size_t I>
+  concept TupleElementAt = requires { typename std::tuple_element_t<I, T>; }
+                        && HasGetAt<T, I>
+                        && HasGetAt<T const, I>;
+
+  template <typename T, std::size_t... Is>
+  consteval auto TupleProtocolAt(std::index_sequence<Is...>) -> bool
+  {
+    return (TupleElementAt<T, Is> && ...);
+  }
+
+  // precedence, not protocol: a range stays a sequence, and a type with a
+  // scheme or an encode/decode pair keeps its own dispatch
+  template <typename T>
+  concept TupleLike = HasTupleSize<T>
+    && concepts::TupleProtocolAt<T>(std::make_index_sequence<std::tuple_size_v<T>>{ })
+    && (!std::ranges::range<T>)
+    && (!HasScheme<T>)
+    && (!HasEncodeDecode<T>);
+
+  template <typename M>
+  concept StringKeyed = utilities::MapLike<M>
+    && std::convertible_to<typename M::key_type, std::string_view>;
+
+  // a key that also converts to std::string_view takes the plain string path
+  template <typename M>
+  concept WireStringKeyed = utilities::MapLike<M>
+    && (!StringKeyed<M>)
+    && HasEncodeDecode<typename M::key_type>
+    && std::convertible_to<WireTypeOf<typename M::key_type>, std::string_view>;
+
+  // written as an object named by its keys; every other map is a sequence of pairs
+  template <typename M>
+  concept ObjectKeyed = StringKeyed<M> || WireStringKeyed<M>;
+}
+
+namespace oxbox::serialization
+{
+  using detail::concepts::ObjectKeyed;
+  using detail::concepts::StringKeyed;
+  using detail::concepts::TupleLike;
+  using detail::concepts::WireStringKeyed;
 }

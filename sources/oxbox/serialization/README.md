@@ -35,7 +35,7 @@ auto back = serialization::DeserializeFrom<Config>("/tmp/config.yaml");
 
 | File | Holds |
 |------|-------|
-| `concepts.hpp` | `Sink`, `Source` (the streaming byte contracts: advancing-span `Read`/`Write`, `docs/streaming-io.md` §2), `Character` / `StringSequence(Of)` / `SequenceCharT`, `Writer`, `Reader`, `Format`, `_OwnsEveryItem`, and the `Has*` detection concepts |
+| `concepts.hpp` | `Sink`, `Source` (the streaming byte contracts: advancing-span `Read`/`Write`, `docs/streaming-io.md` §2), `Character` / `StringSequence(Of)` / `SequenceCharT`, `Writer`, `Reader`, `Format`, `_OwnsEveryItem`, the walkers' shape concepts (`TupleLike`, `StringKeyed`, `WireStringKeyed`, `ObjectKeyed`, over `utilities::MapLike`), and the `Has*` detection concepts |
 | `stream.hpp` | the contract plumbing: `detail::PutBytes`/`PutText` drain loops for writers, `detail::SourceBuf`/`SourceStream` (a `std::streambuf` over a `Source`, for DOM parsers), `detail::DrainBytes` (binary's blob pull) |
 | `scheme.hpp` | the declarative vocabulary: `Field<T,M>` (name, pointer-to-member, description, `_Label` spelling), `Scheme<T, Fs...>`, `EnumMap<E,N>` and its deduction guides, and the `IsStdOptionalT` / `FixedSequence` traits the field machinery dispatches on |
 | `hooks.hpp` | the per-type opt-in points: `IsCannedT`/`IsCanned` (the canned-subtree marker consumers specialize) and the `RunArchiveHook`/`RunRestoreHook` lifecycle calls |
@@ -65,9 +65,9 @@ auto back = serialization::DeserializeFrom<Config>("/tmp/config.yaml");
 `HasField` reports whether a child remains, and `EnterField` enters that
 child regardless of the requested name. `query.hpp`'s by-name lookup uses
 the reflected C++ object's scheme; those names remain available in memory
-but cannot be recovered from positional bytes. Populated maps cannot
-round-trip: their keys are field names, and the map reader enumerates
-`FieldNames`.
+but cannot be recovered from positional bytes. Populated string-keyed maps
+cannot round-trip: their keys are field names, and the map reader enumerates
+`FieldNames`. Every other map is an array of pairs and round-trips.
 
 ## How a type says what it serializes as
 
@@ -174,8 +174,43 @@ field does not serialize; back it with storage, or give the type an
 `std::unique_ptr<T>` / `std::shared_ptr<T>`, sequence containers (anything
 with `begin`/`end` + `value_type` + `push_back`/`insert`), fixed-extent
 sequences (`std::array<T, N>` — reads exactly N elements; a shorter wire
-array is a `ParseError`, surplus elements are left unread), and maps with
-`string_view`-convertible keys.
+array is a `ParseError`, surplus elements are left unread), tuple-likes
+(`TupleLike`, below), and maps (anything with
+`key_type` and `mapped_type`, `utilities::MapLike`). Reading a growable
+sequence or an array-of-pairs map fills a default-constructed slot before
+it inserts it, so the sequence's elements, and that map's keys and mapped
+values, must be default-constructible; a `static_assert` in the read walker
+says so at the call. An object-keyed map builds each key from its field
+name (or `_Decode`s it) and needs only its mapped value
+default-constructible.
+
+A tuple-like is whatever structured bindings accept through the tuple
+protocol: `std::tuple_size<T>`, `std::tuple_element_t<I, T>` and a `get<I>`
+(a member, or found by ADL, which is `std::get` for the standard types) for
+every index. `std::tuple`, `std::pair` and a user type that specialises the
+three are tuple-likes; `std::array` is too, but a range stays a sequence. A
+tuple-like is an array of its elements: `std::pair<int, std::string>` is
+`[1, "a"]` in JSON. A short wire array fills an optional or pointer tail
+with empty and throws `ParseError` for any other missing element. Reading
+needs `get<I>` to return a mutable reference; a by-value or const `get`
+writes but stops at a `static_assert` when read into. A tuple-like with a scheme or an `_Encode`/`_Decode` pair of its own
+serializes through those instead. A type derived from `std::tuple` is a
+tuple-like only once it specialises `std::tuple_size` and
+`std::tuple_element` (its `get` is the base's); without them it does not
+compile.
+
+A map's wire shape follows its key:
+
+| Key | Wire | JSON |
+|-----|------|------|
+| convertible to `std::string_view` | an object, one field per key | `{"a": 1}` |
+| `_Encode`s to a string, and does not convert | an object, one field per encoded key | `{"a": 1}` |
+| anything else the walker visits (integral, mapped enum, reflected struct, a non-string `_Encode`) | an array of `[key, value]` pairs | `[[1, {...}], [2, {...}]]` |
+
+The array form keeps a key a value: an XML element name cannot start with a
+digit, and a struct key has no field-name spelling. On the binary wires the
+map is an array node (its tag and payload byte length, no element count),
+and each entry is a nested array node holding the key and the value.
 
 `std::filesystem::path` writes but does not read: `read-walker.hpp:65`
 spells `PathFromString` unqualified and lookup at the point of instantiation
@@ -491,7 +526,7 @@ By-name lookup, path-extension dispatch, the record-stream layer and the
 `std::formatter` bridge all pick it up from there.
 
 Adding it to the `AllFormats` type list in `unit.test/format.cpp` runs the
-common contract tests. `NamedFormatContract` holds populated-map cases;
+common contract tests. `NamedFormatContract` holds populated string-keyed map cases, `FormatContract` the integer-keyed maps and pairs;
 `TextFormatContract` holds text corruption and mapped enum-name cases;
 `BinaryFormatEnums` covers integer enums for both binary formats.
 Format-specific wire-shape tests go in a `unit.test/format-toml.cpp`.
@@ -519,15 +554,15 @@ Private members are out of reach this way: no friendship, no access.
 
 | File | Covers |
 |------|--------|
-| `unit.test/serialization.cpp` | format-agnostic behaviour: Scheme dispatch (missing field, type mismatch, const overload, the generic `Serialize<F>` entry point), short wire arrays into tuples, and encapsulated types — private and protected state on the wire, labels as wire names, and the pin that no scheme declared is no scheme at all |
+| `unit.test/serialization.cpp` | format-agnostic behaviour: Scheme dispatch (missing field, type mismatch, const overload, the generic `Serialize<F>` entry point), short wire arrays into tuples and pairs, and encapsulated types — private and protected state on the wire, labels as wire names, and the pin that no scheme declared is no scheme at all |
 | `unit.test/reflected-scheme.cpp` | the scheme route end to end: the friend tag alone in every format, private members, doc comments as descriptions, enums and enumerator labels, bases (hand-written, grandbase, untagged), reference members, a scheme naming fewer members than its type has, and the pin that an untagged derived type cannot borrow its base's scheme |
 | `unit.test/inheritance.cpp` | single-base, multi-base, three-deep chains, a hand-written scheme reaching its base through `base_list`, variant-alternative-inherits-disc, field-name-conflict laissez-faire, vector-of-derived |
 | `unit.test/discriminated-variant.cpp` | round-trips, multi-level dispatch, cycle detection, nested-in-scheme, vector-of-variant |
 | `unit.test/encode-decode.cpp` | the `_Encode`/`_Decode` hook in both spellings, the scalar wire shape it produces, encoded fields inside a schemed struct, and its ordering against `_Archive`/`_Restore` |
 | `unit.test/canned-value.cpp` | `Canned` subtree capture and `Uncan` completion |
 | `unit.test/io.cpp` | each adapter, every entry-point form, file-extension dispatch, error paths (unknown extension, missing file) |
-| `unit.test/format.cpp` | contract conformance — `static_assert` per (format, adapter) pair, plus a `TYPED_TEST_SUITE` against every format. `TextFormatContract` holds the cases that corrupt the wire as text or rely on enum names, which the binary wire has neither of; `NamedFormatContract` holds populated-map cases; `BinaryFormatEnums` pins both binary formats on the same enum inputs |
-| `unit.test/format-json.cpp` / `-yaml` / `-xml` / `-binary` / `-positional` / `-node` | per-format wire shape and parser behaviour; binary also covers malformed-input rejection |
+| `unit.test/format.cpp` | contract conformance — `static_assert` per (format, adapter) pair, plus a `TYPED_TEST_SUITE` against every format. `TextFormatContract` holds the cases that corrupt the wire as text or rely on enum names, which the binary wire has neither of; `NamedFormatContract` holds populated string-keyed map cases, `FormatContract` the integer-keyed maps and pairs; `BinaryFormatEnums` pins both binary formats on the same enum inputs |
+| `unit.test/format-json.cpp` / `-yaml` / `-xml` / `-binary` / `-positional` / `-node` | per-format wire shape and parser behaviour; json also pins which map key selects which wire shape, binary covers malformed-input rejection |
 | `unit.test/reader.cpp` / `unit.test/writer.cpp` | the record-stream layer: per-format framing, delimiters, order hints |
 | `unit.test/formatter.cpp` | `std::format` spec dispatch — `{:json}`, default, unknown-name error |
 | `unit.test/query.cpp` | dotted-path get/set/has, `FieldNames`, lookup by label rather than member name |

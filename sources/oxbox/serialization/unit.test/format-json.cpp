@@ -2,6 +2,7 @@
 // are the project's own allowance in tests
 
 
+#include "oxbox/serialization/concepts.hpp"
 #include "oxbox/serialization/io.hpp"
 #include "oxbox/serialization/serializable.hpp"
 
@@ -10,13 +11,17 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -188,4 +193,115 @@ TEST(Json, AnOctetOutOfRangeIsNamedWhereItStands) {
 }
 
 }  // namespace
+
+namespace oxbox::serialization::unit_test::detail::format_json
+{
+  struct GridCell {
+    friend constexpr auto reflect_scheme(GridCell*) -> auto;
+
+    std::int32_t column{};
+    std::int32_t row{};
+
+    auto operator<=>(GridCell const&) const -> std::strong_ordering = default;
+  };
+
+  constexpr auto reflect_scheme(GridCell*) -> auto
+  {
+    using T = GridCell;
+    return ::reflect::class_scheme<
+      ::reflect::member_scheme<"column", &T::column>,
+      ::reflect::member_scheme<"row",    &T::row>>{ };
+  }
+
+  struct Tag {
+    std::string text;
+
+    auto operator<=>(Tag const&) const    -> std::strong_ordering = default;
+    auto _Encode() const                  -> std::string { return text; }
+    static auto _Decode(std::string wire) -> Tag      { return Tag{ std::move(wire) }; }
+  };
+
+  struct Slot {
+    std::uint16_t number{};
+
+    auto operator<=>(Slot const&) const     -> std::strong_ordering = default;
+    auto _Encode() const                    -> std::uint16_t { return number; }
+    static auto _Decode(std::uint16_t wire) -> Slot          { return Slot{ wire }; }
+  };
+
+  // both a string and a string-encoded key: the plain string path wins
+  struct BothKey {
+    std::string text;
+
+    BothKey() = default;
+    explicit BothKey(std::string_view name) : text{ name } {}
+    operator std::string_view() const noexcept { return text; }
+
+    auto operator<=>(BothKey const&) const -> std::strong_ordering = default;
+    auto _Encode() const                   -> std::string { return "encoded:" + text; }
+    static auto _Decode(std::string wire)  -> BothKey     { return BothKey{ std::string_view{ wire }.substr(8) }; }
+  };
+}
+
+namespace ser = oxbox::serialization;
+
+using ser::unit_test::detail::format_json::BothKey;
+using ser::unit_test::detail::format_json::GridCell;
+using ser::unit_test::detail::format_json::Slot;
+using ser::unit_test::detail::format_json::Tag;
+
+static_assert( ser::StringKeyed    <std::map<std::string,   std::int32_t>>);
+static_assert(!ser::WireStringKeyed<std::map<std::string,   std::int32_t>>);
+static_assert( ser::WireStringKeyed<std::map<Tag,           std::int32_t>>);
+static_assert(!ser::StringKeyed    <std::map<Tag,           std::int32_t>>);
+static_assert( ser::StringKeyed    <std::map<BothKey,       std::int32_t>>);
+static_assert(!ser::WireStringKeyed<std::map<BothKey,       std::int32_t>>);
+static_assert(!ser::ObjectKeyed    <std::map<std::uint16_t, std::int32_t>>);
+static_assert(!ser::ObjectKeyed    <std::map<LogLevel,      std::int32_t>>);
+static_assert(!ser::ObjectKeyed    <std::map<GridCell,      std::int32_t>>);
+static_assert(!ser::ObjectKeyed    <std::map<Slot,          std::int32_t>>);
+static_assert( ser::TupleLike      <std::pair<std::int32_t, std::string>>);
+static_assert( ser::TupleLike      <std::tuple<>>);
+static_assert(!ser::TupleLike      <std::array<std::int32_t, 2>>);
+
+TEST(Json, StringKeyedMapsAreObjects) {
+  EXPECT_EQ((ser::Serialize<ser::JsonFormat>(std::map<std::string, std::int32_t>{ { "a", 1 } })), R"({"a":1})");
+  EXPECT_EQ((ser::Serialize<ser::JsonFormat>(std::map<Tag, std::int32_t>{ { Tag{ "b" }, 2 } })),  R"({"b":2})");
+}
+
+TEST(Json, AKeyThatIsBothStringAndEncodedTakesTheStringPath) {
+  std::map<BothKey, std::int32_t> const orig{ { BothKey{ "a" }, 1 } };
+  auto const json{ ser::Serialize<ser::JsonFormat>(orig) };
+  EXPECT_EQ(json, R"({"a":1})");
+  EXPECT_EQ((ser::Deserialize<ser::JsonFormat, std::map<BothKey, std::int32_t>>(json)), orig);
+}
+
+TEST(Json, IntegerKeyedMapIsAnArrayOfPairs) {
+  std::map<std::uint16_t, Config> const orig{ { 1, Config{ .host = "h", .port = 2, .tls = true } }, { 3, Config{ } } };
+  auto const json{ ser::Serialize<ser::JsonFormat>(orig) };
+  EXPECT_EQ(json, R"([[1,{"host":"h","port":2,"tls":true}],[3,{"host":"","port":0,"tls":false}]])");
+  EXPECT_EQ((ser::Deserialize<ser::JsonFormat, std::map<std::uint16_t, Config>>(json)), orig);
+}
+
+TEST(Json, EnumKeyedMapRoundTripsByName) {
+  std::map<LogLevel, std::int32_t> const orig{ { LogLevel::ERROR, 1 }, { LogLevel::WARN, 2 } };
+  auto const json{ ser::Serialize<ser::JsonFormat>(orig) };
+  EXPECT_EQ(json, R"([["warn",2],["error",1]])");
+  EXPECT_EQ((ser::Deserialize<ser::JsonFormat, std::map<LogLevel, std::int32_t>>(json)), orig);
+}
+
+TEST(Json, ReflectedStructKeyedMapRoundTrips) {
+  std::map<GridCell, std::string> const orig{ { GridCell{ .column = 1, .row = 2 }, "ab" } };
+  auto const json{ ser::Serialize<ser::JsonFormat>(orig) };
+  EXPECT_EQ(json, R"([[{"column":1,"row":2},"ab"]])");
+  EXPECT_EQ((ser::Deserialize<ser::JsonFormat, std::map<GridCell, std::string>>(json)), orig);
+}
+
+TEST(Json, EncodedKeyWithANumberWireIsAnArrayOfPairs) {
+  std::map<Slot, bool> const orig{ { Slot{ 5 }, true } };
+  auto const json{ ser::Serialize<ser::JsonFormat>(orig) };
+  EXPECT_EQ(json, R"([[5,true]])");
+  EXPECT_EQ((ser::Deserialize<ser::JsonFormat, std::map<Slot, bool>>(json)), orig);
+}
+
 // NOLINTEND(misc-non-private-member-variables-in-classes)

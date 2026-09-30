@@ -362,6 +362,7 @@ projects each had a drifting copy of.
 | `exception.hpp` | `Exception<ID, Base, FORMAT, Args...>`, one exception type per `using` alias, its text formatted from checked arguments |
 | `text.hpp` | `Joined` (with optional projection), case folding and trimming. Text in, text out |
 | `string.hpp` | `CompatibleStringView`, `StringLikeValue`, `StringSequence`, `StringRange` — what counts as a string, and as a range of them |
+| `map-like.hpp` | `MapLike` — what counts as a map: a container naming its `key_type` and `mapped_type` |
 | `path.hpp` | `PathFromString`/`PathToString` — a filesystem path across the char/wchar boundary without a locale in the way |
 | `codepoint.hpp` | what a code point is and whether it is one: the widths, `Encoding`, the range constants, the validity rules |
 | `utf-encode.hpp` | a code point down into code units of a named width |
@@ -523,9 +524,11 @@ message must lead the reader to (or nothing), and a control that must still
 compile — a check that only ever saw a failing compile cannot tell a working
 guard from a broken include path. The cases cover duplicate long names,
 duplicate short spellings (checking both member names), malformed short
-tags, invalid hex literals, and exception formats their arguments do not
-fit. Native Linux CTest also runs every case in the
-table with the host compilers, one entry per unit and compiler
+tags, invalid hex literals, exception formats their arguments do not
+fit, a serialization read slot that cannot be default-constructed, a
+`std::tuple`-derived type that has not specialised the tuple protocol, and
+a tuple-like read through a by-value or const `get`.
+Native Linux CTest also runs every case in the table with the host compilers, one entry per unit and compiler
 (`negative-compile.gcc.short-options.distinct`), so each entry is one
 compile and a parallel gate spreads them; the standalone script adds the
 MSVC leg. A run whose every selected leg was skipped exits 77, which CTest
@@ -627,6 +630,28 @@ What a consumer has to know about how this library behaves:
   a `.linux` tag on the cases that need `/dev/full` and `RLIMIT_AS`.
 
 ## Release notes
+
+**0.37.0 — `serialization` carries tuple-likes and maps with non-string keys.**
+A tuple-like is now the tuple protocol structured bindings use
+(`std::tuple_size`, `std::tuple_element`, a member or ADL `get<I>` for
+every index), not `std::tuple` alone: `std::pair` and a user type that
+specialises the protocol write and read as an array of their elements; one
+with a scheme or an `_Encode`/`_Decode` pair keeps it, and a range stays a
+sequence. Breaking, for a type derived from `std::tuple`: it matched the
+old overload by derived-to-base conversion and now does not compile until
+it specialises `std::tuple_size` and `std::tuple_element` (its `get` is the
+base's). A map whose key neither converts to `std::string_view` nor
+`_Encode`s to a string (integers, mapped enums, reflected structs) is an array of
+`[key, value]` pairs on every format, positional included; string-keyed
+maps keep their object shape, and a key that both converts and encodes,
+ambiguous before, takes the plain string path. Reading a growable
+sequence or an array-of-pairs map whose element, key or mapped value is not
+default-constructible now stops at a `static_assert` that says so (an
+object-keyed map needs only its mapped value default-constructible), and so
+does reading a tuple-like whose `get<I>` returns no mutable reference. `utilities/map-like.hpp` is new:
+`MapLike`, which `cli` and `serialization` both use. Apart from the
+tuple-derived types, nothing already serializing changed shape. The
+short-array `ParseError` for a missing element now says `array` where it said `tuple`.
 
 **0.36.2 — the package carries its licence.** The conan package now ships
 `licenses/LICENSE`, where a consumer that redistributes oxbox's binaries

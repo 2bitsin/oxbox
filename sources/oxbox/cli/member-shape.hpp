@@ -3,6 +3,8 @@
 // What shape a member's type has: how many command-line tokens it takes,
 // and how a value is put into it.
 
+#include "oxbox/utilities/map-like.hpp"
+
 #include <concepts>
 #include <cstddef>
 #include <limits>
@@ -31,11 +33,9 @@ namespace oxbox::cli::detail::member_shape
       return 1u;                                      // scalar, optional, enum
   }
 
-  // std::set has a key_type too, hence the mapped_type requirement.
   template <typename Type>
   concept MapLike = ArityOf<Type>() == UNBOUNDED
-    && requires { typename std::remove_cvref_t<Type>::key_type;
-                  typename std::remove_cvref_t<Type>::mapped_type; };
+    && utilities::MapLike<std::remove_cvref_t<Type>>;
 
   template <typename Type>
   concept ListLike = ArityOf<Type>() == UNBOUNDED && !MapLike<Type>;

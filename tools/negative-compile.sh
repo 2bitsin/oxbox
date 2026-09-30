@@ -43,6 +43,10 @@ CASES=(
   "short-options.bare-dash.verbose"$FS"$HERE/negative-compile/short-options.bare-dash.cpp"$FS"a short option tag must be a dash and exactly one character"$FS"verbose"$FS"$HERE/negative-compile/short-options.distinct.cpp"
   "contract-macro.mode-without-flag"$FS"$HERE/negative-compile/contract-macro.mode-without-flag.cpp"$FS"OXBOX_CONTRACTS_IGNORE is defined exactly when OXBOX_CONTRACT_MODE is ContractMode::OFF"$FS""$FS"$HERE/negative-compile/contract-macro.accepts.cpp"
   "contract-macro.flag-without-mode"$FS"$HERE/negative-compile/contract-macro.flag-without-mode.cpp"$FS"OXBOX_CONTRACTS_IGNORE is defined exactly when OXBOX_CONTRACT_MODE is ContractMode::OFF"$FS""$FS"$HERE/negative-compile/contract-macro.accepts.cpp"
+  "read-walker.no-default-slot"$FS"$HERE/negative-compile/read-walker.no-default-slot.cpp"$FS"must be default-constructible: the read walker fills a default-constructed slot"$FS""$FS"$HERE/negative-compile/read-walker.accepts.cpp"
+  "read-walker.derived-tuple"$FS"$HERE/negative-compile/read-walker.derived-tuple.cpp"$FS"HasTupleSize"$FS"Row"$FS"$HERE/negative-compile/read-walker.derived-tuple-opted-in.cpp"
+  "read-walker.by-value-get"$FS"$HERE/negative-compile/read-walker.by-value-get.cpp"$FS"reading a tuple-like needs get<I> to return a mutable reference"$FS""$FS"$HERE/negative-compile/read-walker.member-get.cpp"
+  "read-walker.const-get"$FS"$HERE/negative-compile/read-walker.const-get.cpp"$FS"reading a tuple-like needs get<I> to return a mutable reference"$FS""$FS"$HERE/negative-compile/read-walker.member-get.cpp"
   "contract-macro.no-mode"$FS"$HERE/negative-compile/contract-macro.no-mode.cpp"$FS"declared"$FS"OXBOX_CONTRACT_MODE"$FS"$HERE/negative-compile/contract-macro.accepts.cpp"
 )
 

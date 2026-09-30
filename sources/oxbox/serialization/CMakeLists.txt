@@ -6,3 +6,4 @@ Link_dependencies(
   pugixml::pugixml              # XML backend
   TEST oxbox-platform           # ScratchArea
 )
+Add_negative_compile_tests(read-walker)
